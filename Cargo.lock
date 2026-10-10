@@ -8443,6 +8443,7 @@ dependencies = [
 name = "skippy-cache"
 version = "0.78.0"
 dependencies = [
+ "ahash",
  "anyhow",
  "blake3",
  "cubecl",

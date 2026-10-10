@@ -120,46 +120,47 @@ impl Scheduler {
         }
         let mut budget = self.config.max_tokens_per_iteration;
         let mut prefill_sequences = 0usize;
-        let ids = self.active.keys().cloned().collect::<Vec<_>>();
+        let max_prefill_sequences = self.config.max_prefill_sequences_per_iteration;
+        let prefill_chunk_tokens = self.config.prefill_chunk_tokens;
+        let max_consecutive_prefill = self.config.max_consecutive_prefill_iterations;
         // llama's mixed-token ABI can batch many prefills or many decode rows,
         // but combining a long prefill with live decode rows changes dense
         // model outputs. Give chunked prefill/recompute one iteration, then
         // resume decode for all active sequences on the next iteration.
-        let has_prefill = ids.iter().any(|id| {
-            self.active
-                .get(id)
-                .is_some_and(|sequence| sequence.prefill_cursor < sequence.recompute_token_count())
-        });
-        let has_live_decode = ids.iter().any(|id| {
-            self.active.get(id).is_some_and(|sequence| {
-                sequence.prefill_cursor >= sequence.recompute_token_count()
-                    && sequence.pending_decode_token().is_some()
-            })
-        });
+        // Single pass over values: avoids cloning every active key plus two
+        // extra map lookups per sequence on this hot per-iteration path.
+        let mut has_prefill = false;
+        let mut has_live_decode = false;
+        for sequence in self.active.values() {
+            let replay_len = sequence.recompute_token_count();
+            if sequence.prefill_cursor < replay_len {
+                has_prefill = true;
+            } else if sequence.pending_decode_token().is_some() {
+                has_live_decode = true;
+            }
+            if has_prefill && has_live_decode {
+                break;
+            }
+        }
         let run_prefill_phase = has_prefill
-            && (!has_live_decode
-                || self.consecutive_prefill_iterations
-                    < self.config.max_consecutive_prefill_iterations);
+            && (!has_live_decode || self.consecutive_prefill_iterations < max_consecutive_prefill);
 
-        for id in ids {
+        // Iterate in BTreeMap key order (same as the previous cloned-keys
+        // snapshot) and clone an id only when its sequence actually emits work.
+        for (id, sequence) in self.active.iter_mut() {
             if budget == 0 {
                 break;
             }
-            let Some(sequence) = self.active.get_mut(&id) else {
-                continue;
-            };
-            let replay = sequence.recompute_tokens();
-            if sequence.prefill_cursor < replay.len() {
+            let replay_len = sequence.recompute_token_count();
+            if sequence.prefill_cursor < replay_len {
                 if !run_prefill_phase {
                     continue;
                 }
-                if prefill_sequences >= self.config.max_prefill_sequences_per_iteration {
+                if prefill_sequences >= max_prefill_sequences {
                     continue;
                 }
-                let count = self
-                    .config
-                    .prefill_chunk_tokens
-                    .min(replay.len() - sequence.prefill_cursor)
+                let count = prefill_chunk_tokens
+                    .min(replay_len - sequence.prefill_cursor)
                     .min(budget);
                 let start = sequence.prefill_cursor;
                 let end = start + count;
@@ -168,10 +169,13 @@ impl Scheduler {
                 } else {
                     IterationPhase::Recompute
                 };
-                let sample_last = end == replay.len() && sequence.generated_tokens.is_empty();
+                let sample_last = end == replay_len && sequence.generated_tokens.is_empty();
+                // Copy only the scheduled chunk instead of materializing the
+                // full prompt + generated replay vector per sequence.
+                let tokens = sequence.copy_recompute_range(start, end);
                 plan.work.push(IterationWork {
-                    sequence_id: id,
-                    tokens: replay[start..end].to_vec(),
+                    sequence_id: id.clone(),
+                    tokens,
                     positions: contiguous_positions(start, count),
                     sample_last,
                     phase,
@@ -190,9 +194,9 @@ impl Scheduler {
 
             if let Some(token) = sequence.pending_decode_token() {
                 plan.work.push(IterationWork {
-                    sequence_id: id,
+                    sequence_id: id.clone(),
                     tokens: vec![token],
-                    positions: contiguous_positions(replay.len(), 1),
+                    positions: contiguous_positions(replay_len, 1),
                     sample_last: true,
                     phase: IterationPhase::Decode,
                     sampling: sequence.sampling.clone(),
@@ -200,7 +204,7 @@ impl Scheduler {
                 // The token scheduled for decode occupies the next position.
                 // Keep the replay cursor aligned so uninterrupted sequences do
                 // not replay that token as recompute work on the next step.
-                sequence.prefill_cursor = replay.len().saturating_add(1);
+                sequence.prefill_cursor = replay_len.saturating_add(1);
                 plan.token_count += 1;
                 budget -= 1;
             }
@@ -228,27 +232,31 @@ impl Scheduler {
     }
 
     fn plan_mixed_iteration(&mut self, plan: &mut IterationPlan) {
-        let mut budget = self.config.max_tokens_per_iteration;
-        let ids = self.active.keys().cloned().collect::<Vec<_>>();
+        let max_tokens = self.config.max_tokens_per_iteration;
+        let max_prefill_sequences = self.config.max_prefill_sequences_per_iteration;
+        let prefill_chunk_tokens = self.config.prefill_chunk_tokens;
+        let mut budget = max_tokens;
+        let len = self.active.len();
+        if len == 0 {
+            self.consecutive_prefill_iterations = 0;
+            return;
+        }
 
         // Decode is latency-sensitive and consumes exactly one token per live
         // sequence. Reserve those rows first so prompt traffic cannot starve
         // active generation.
-        let decode_start = if ids.is_empty() {
-            0
-        } else {
-            self.mixed_decode_cursor % ids.len()
-        };
+        let decode_start = self.mixed_decode_cursor % len;
+        // Collect ordered mutable refs instead of cloning every key: rotation
+        // is by index, and an id is cloned only when its decode row emits.
+        let mut ordered: Vec<(&String, &mut Sequence)> = self.active.iter_mut().collect();
         let mut decode_examined = 0usize;
-        for offset in 0..ids.len() {
+        for offset in 0..ordered.len() {
             if budget == 0 {
                 break;
             }
             decode_examined = offset + 1;
-            let id = &ids[(decode_start + offset) % ids.len()];
-            let Some(sequence) = self.active.get_mut(id) else {
-                continue;
-            };
+            let idx = (decode_start + offset) % ordered.len();
+            let (id, sequence) = &mut ordered[idx];
             let replay_len = sequence.recompute_token_count();
             if sequence.prefill_cursor < replay_len {
                 continue;
@@ -257,7 +265,7 @@ impl Scheduler {
                 continue;
             };
             plan.work.push(IterationWork {
-                sequence_id: id.clone(),
+                sequence_id: (*id).clone(),
                 tokens: vec![token],
                 positions: contiguous_positions(replay_len, 1),
                 sample_last: true,
@@ -268,26 +276,20 @@ impl Scheduler {
             plan.token_count += 1;
             budget -= 1;
         }
-        if !ids.is_empty() {
-            self.mixed_decode_cursor = (decode_start + decode_examined) % ids.len();
-        }
+        self.mixed_decode_cursor = (decode_start + decode_examined) % ordered.len();
+        drop(ordered);
 
         let mut prefill_sequences = 0usize;
-        for id in ids {
-            if budget == 0 || prefill_sequences >= self.config.max_prefill_sequences_per_iteration {
+        for (id, sequence) in self.active.iter_mut() {
+            if budget == 0 || prefill_sequences >= max_prefill_sequences {
                 break;
             }
-            let Some(sequence) = self.active.get_mut(&id) else {
-                continue;
-            };
-            let replay = sequence.recompute_tokens();
-            if sequence.prefill_cursor >= replay.len() {
+            let replay_len = sequence.recompute_token_count();
+            if sequence.prefill_cursor >= replay_len {
                 continue;
             }
-            let count = self
-                .config
-                .prefill_chunk_tokens
-                .min(replay.len() - sequence.prefill_cursor)
+            let count = prefill_chunk_tokens
+                .min(replay_len - sequence.prefill_cursor)
                 .min(budget);
             let start = sequence.prefill_cursor;
             let end = start + count;
@@ -296,11 +298,12 @@ impl Scheduler {
             } else {
                 IterationPhase::Recompute
             };
+            let tokens = sequence.copy_recompute_range(start, end);
             plan.work.push(IterationWork {
-                sequence_id: id,
-                tokens: replay[start..end].to_vec(),
+                sequence_id: id.clone(),
+                tokens,
                 positions: contiguous_positions(start, count),
-                sample_last: end == replay.len() && sequence.generated_tokens.is_empty(),
+                sample_last: end == replay_len && sequence.generated_tokens.is_empty(),
                 phase,
                 sampling: sequence.sampling.clone(),
             });

@@ -12,6 +12,7 @@ name = "skippy_cache"
 path = "src/lib.rs"
 
 [dependencies]
+ahash.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 cubecl = { version = "=0.10.0", optional = true }

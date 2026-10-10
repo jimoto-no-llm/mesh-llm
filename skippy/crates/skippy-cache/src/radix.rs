@@ -1,4 +1,6 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
+
+use ahash::AHashMap;
 
 use anyhow::{Result, bail};
 
@@ -124,7 +126,7 @@ pub struct UnifiedRadixCache<R, E> {
     splits: u64,
     resident_evictions: u64,
     recurrent_evictions: u64,
-    roots: HashMap<String, RadixNode<R, E>>,
+    roots: AHashMap<String, RadixNode<R, E>>,
 }
 
 impl<R, E> Default for UnifiedRadixCache<R, E> {
@@ -140,7 +142,7 @@ impl<R, E> UnifiedRadixCache<R, E> {
             splits: 0,
             resident_evictions: 0,
             recurrent_evictions: 0,
-            roots: HashMap::new(),
+            roots: AHashMap::new(),
         }
     }
 
