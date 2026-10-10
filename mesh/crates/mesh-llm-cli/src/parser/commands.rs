@@ -1231,6 +1231,12 @@ pub enum Command {
         #[command(subcommand)]
         command: AuthCommand,
     },
+    /// Show fork information (version, upstream, guides).
+    Jimoto {
+        /// Print machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run a CLI command contributed by a configured plugin.
     #[command(external_subcommand)]
     ExternalPlugin(Vec<OsString>),

@@ -151,7 +151,7 @@ pub fn command_family(command: &Command) -> CliCommandFamily {
         | Command::Status { .. }
         | Command::Stop => CliCommandFamily::Runtime,
         Command::Config { .. } | Command::Analytics { .. } => CliCommandFamily::Configuration,
-        Command::Doctor { .. } => CliCommandFamily::Diagnostics,
+        Command::Doctor { .. } | Command::Jimoto { .. } => CliCommandFamily::Diagnostics,
         Command::Discover { .. } => CliCommandFamily::Discovery,
         Command::RotateKey | Command::Auth { .. } => CliCommandFamily::Identity,
         Command::Goose { .. }

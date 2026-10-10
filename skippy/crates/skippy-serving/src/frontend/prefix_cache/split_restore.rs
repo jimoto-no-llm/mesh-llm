@@ -80,30 +80,38 @@ impl StageOpenAiBackend {
             self.drop_embedded_split_restore(request, session_key, downstream);
             return Ok(None);
         }
-        let mut attrs = self.openai_attrs(request.ids);
-        attrs.insert("skippy.kv.decision".to_string(), json!("chain_restore_hit"));
-        attrs.insert(
-            "skippy.kv.restored_tokens".to_string(),
-            json!(restored_tokens),
-        );
-        attrs.insert(
-            "skippy.kv.suffix_prefill_tokens".to_string(),
-            json!(prefill_tokens.len().saturating_sub(restored_tokens)),
-        );
-        attrs.insert(
-            "skippy.kv.lookup_hits".to_string(),
-            json!(restore_stats.kv_lookup_hits),
-        );
-        attrs.insert(
-            "skippy.kv.hit_stage_mask".to_string(),
-            json!(restore_stats.kv_hit_stage_mask),
-        );
-        insert_chain_prefix_cache_savings_attrs(
-            &mut attrs,
-            chain_prefix_cache_savings(&restore_stats, restored_tokens, request.activation_width),
-        );
-        self.telemetry
-            .emit("stage.openai_kv_lookup_decision", attrs);
+        // Attribute maps cost a dozen allocations per request and `emit`
+        // drops them when telemetry is off (the default), so skip the build.
+        if self.telemetry.is_enabled() {
+            let mut attrs = self.openai_attrs(request.ids);
+            attrs.insert("skippy.kv.decision".to_string(), json!("chain_restore_hit"));
+            attrs.insert(
+                "skippy.kv.restored_tokens".to_string(),
+                json!(restored_tokens),
+            );
+            attrs.insert(
+                "skippy.kv.suffix_prefill_tokens".to_string(),
+                json!(prefill_tokens.len().saturating_sub(restored_tokens)),
+            );
+            attrs.insert(
+                "skippy.kv.lookup_hits".to_string(),
+                json!(restore_stats.kv_lookup_hits),
+            );
+            attrs.insert(
+                "skippy.kv.hit_stage_mask".to_string(),
+                json!(restore_stats.kv_hit_stage_mask),
+            );
+            insert_chain_prefix_cache_savings_attrs(
+                &mut attrs,
+                chain_prefix_cache_savings(
+                    &restore_stats,
+                    restored_tokens,
+                    request.activation_width,
+                ),
+            );
+            self.telemetry
+                .emit("stage.openai_kv_lookup_decision", attrs);
+        }
         Ok(Some(ChainPrefixRestore {
             restored_tokens,
             stats: restore_stats,

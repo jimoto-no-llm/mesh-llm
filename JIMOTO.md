@@ -20,7 +20,7 @@ just build
 ./target/debug/mesh-llm serve --auto
 ```
 
-ブラウザで `http://localhost:3131` を開くと Web コンソール、API は `http://localhost:9337/v1` です。
+ブラウザで `http://localhost:3131` を開くと Web コンソール、API は `http://localhost:9337/v1` です。フォーク情報の確認は `mesh-llm jimoto`（`--json` 付きで機械可読）です。
 
 ## スマホで使う
 

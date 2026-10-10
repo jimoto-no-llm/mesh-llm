@@ -122,6 +122,10 @@ pub(super) fn format_command(command: &Command, assembly: &mut SummaryAssembly) 
             format_client("opencode", model, host, *write, assembly);
         }
         Command::Stop => assembly.command.push_str(" stop"),
+        Command::Jimoto { json } => {
+            assembly.command.push_str(" jimoto");
+            assembly.flag("json", *json);
+        }
         Command::ModelPrepare {
             source_repo,
             quant,

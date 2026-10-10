@@ -145,6 +145,7 @@ async fn dispatch_general_command(cli: &Cli, cmd: &Command) -> Result<()> {
         Command::Unload { name, port } => run_drop(name, *port).await,
         Command::Status { port } => run_status(*port).await,
         Command::Stop => run_stop(),
+        Command::Jimoto { json } => mesh_llm_commands::jimoto::run_jimoto_command(*json),
         Command::Discover {
             name,
             model,
