@@ -7,6 +7,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ensure-sccache.sh"
 # Git never activates a committed hook on clone, so enable the repository hooks
 # on the first local development build. Skipped in CI, and never overrides a
 # hooks path the developer chose themselves.
@@ -64,6 +67,8 @@ case "$PROFILE" in
     debug|dev) ;;
     *) echo "development product profile must be debug or dev, got: $PROFILE" >&2; exit 1 ;;
 esac
+
+ensure_sccache
 
 host_dir="$REPO_ROOT/target/debug"
 runtime_out="$host_dir/native-runtimes"

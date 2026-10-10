@@ -35,7 +35,7 @@ cd mesh-llm
 just build
 ```
 
-必要なものは `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24 です。`just bootstrap-build-tools` で sccache とリンカを入れられます。sccache を入れられない環境では、そのシェルで `export RUSTC_WRAPPER=""` とします。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) をどうぞ。
+必要なものは `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・`patchelf`（Linux のランタイム同梱用）・Node.js 24 です。`just bootstrap-build-tools` で sccache とリンカを入れられます。sccache を入れられない環境では、そのシェルで `export RUSTC_WRAPPER=""` とします。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) をどうぞ。
 
 ビルドした実行形式は `./target/debug/mesh-llm`（Windows は `.\target\debug\mesh-llm.exe`）にできます。PATH には入らないので、以降の例の `mesh-llm` はこのパスに読み替えるか、PATH を通してください。
 

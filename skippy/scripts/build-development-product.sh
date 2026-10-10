@@ -5,6 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ensure-sccache.sh"
+
 BACKEND=""
 CUDA_ARCH=""
 ROCM_ARCH=""
@@ -58,6 +61,8 @@ if [[ -z "$BACKEND" ]]; then
         *) BACKEND=cpu ;;
     esac
 fi
+
+ensure_sccache
 
 runtime_out="$REPO_ROOT/target/debug/native-runtimes"
 rm -rf "$runtime_out"

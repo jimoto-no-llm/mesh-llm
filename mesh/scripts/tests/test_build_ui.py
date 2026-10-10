@@ -149,6 +149,40 @@ class BuildUiScriptTests(unittest.TestCase):
             r"(?m)^engine-strict\s*=\s*true\s*$",
         )
 
+    def test_ui_toolchain_checked_before_pnpm_install(self) -> None:
+        script = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('source "$SCRIPT_DIR/lib/ensure-ui-tools.sh"', script)
+        check = script.index("ensure_ui_tools")
+        install = script.index("pnpm install --frozen-lockfile")
+        self.assertLess(check, install)
+
+    def test_missing_ui_toolchain_fails_with_guidance(self) -> None:
+        helper = ROOT / "scripts" / "lib" / "ensure-ui-tools.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            missing = subprocess.run(
+                ["/bin/bash", "-c", f'source "{helper}" && ensure_ui_tools'],
+                env={"PATH": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("pnpm", missing.stderr)
+            self.assertIn("corepack", missing.stderr)
+            self.assertIn("MESH_LLM_SKIP_UI=1", missing.stderr)
+            for name in ("node", "pnpm"):
+                stub = Path(directory) / name
+                stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+                stub.chmod(0o755)
+            present = subprocess.run(
+                ["/bin/bash", "-c", f'source "{helper}" && ensure_ui_tools'],
+                env={"PATH": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(present.returncode, 0, present.stderr)
+
     def test_mixed_case_release_profile_uses_release_ui_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             ui_dir = Path(tmp) / "ui"
