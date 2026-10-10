@@ -183,7 +183,7 @@ pub(in crate::output) fn dashboard_status_line(
     push_status_key_hint(&mut left_spans, "R", "Refresh");
 
     let mut right_spans = Vec::new();
-    push_status_metric(&mut right_spans, "peers", state.peer_ids.len().to_string());
+    push_status_metric(&mut right_spans, "peers", tui_peer_list_summary(state));
     push_status_metric(
         &mut right_spans,
         "models",
@@ -194,6 +194,12 @@ pub(in crate::output) fn dashboard_status_line(
         "processes",
         visible_process_count(state).to_string(),
     );
+    if let Some(memory) = tui_memory_summary(state) {
+        push_status_metric(&mut right_spans, "mem", memory);
+    }
+    if let Some(disk) = tui_disk_summary(state) {
+        push_status_metric(&mut right_spans, "disk", disk);
+    }
     push_status_metric(&mut right_spans, "uptime", dashboard_uptime_label(state));
     right_spans.push(status_separator_span());
     right_spans.push(Span::styled(
@@ -234,6 +240,76 @@ pub(in crate::output) fn push_status_metric(
         Style::default().fg(theme.dim),
     ));
     spans.push(Span::styled(value, Style::default().fg(theme.text)));
+}
+
+fn short_peer_id(peer_id: &str) -> String {
+    peer_id.chars().take(8).collect()
+}
+
+fn peer_display_name(peer_id: &str, label: &Option<String>) -> String {
+    match label.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => name.chars().take(16).collect(),
+        None => short_peer_id(peer_id),
+    }
+}
+
+pub(in crate::output) fn tui_peer_list_summary(state: &DashboardState) -> String {
+    if state.peer_ids.is_empty() {
+        return "0".to_string();
+    }
+    let names: Vec<String> = state
+        .peer_ids
+        .iter()
+        .take(3)
+        .map(|(id, label)| peer_display_name(id, label))
+        .collect();
+    let mut summary = format!("{} ({})", state.peer_ids.len(), names.join(", "));
+    if state.peer_ids.len() > 3 {
+        summary.push_str(", …");
+    }
+    const MAX_SUMMARY_CHARS: usize = 40;
+    if summary.chars().count() > MAX_SUMMARY_CHARS {
+        summary = summary
+            .chars()
+            .take(MAX_SUMMARY_CHARS - 1)
+            .collect::<String>()
+            + "…";
+    }
+    summary
+}
+
+fn format_bytes_gb(bytes: u64) -> String {
+    format!("{:.1}GB", bytes as f64 / 1e9)
+}
+
+pub(in crate::output) fn tui_memory_summary(state: &DashboardState) -> Option<String> {
+    let total = state.system_memory_total_bytes?;
+    if total == 0 {
+        return None;
+    }
+    match state.system_memory_available_bytes {
+        Some(available) => Some(format!(
+            "{}/{}",
+            format_bytes_gb(total.saturating_sub(available)),
+            format_bytes_gb(total)
+        )),
+        None => Some(format_bytes_gb(total)),
+    }
+}
+
+pub(in crate::output) fn tui_disk_summary(state: &DashboardState) -> Option<String> {
+    let total = state.system_disk_total_bytes?;
+    if total == 0 {
+        return None;
+    }
+    match state.system_disk_available_bytes {
+        Some(available) => Some(format!(
+            "{}/{}",
+            format_bytes_gb(total.saturating_sub(available)),
+            format_bytes_gb(total)
+        )),
+        None => Some(format_bytes_gb(total)),
+    }
 }
 
 pub(in crate::output) fn status_separator_span() -> Span<'static> {

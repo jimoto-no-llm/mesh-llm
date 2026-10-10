@@ -200,6 +200,55 @@ pub(super) fn dashboard_quantization_from_model_name(model_name: &str) -> Option
         .find(|quantization| !quantization.is_empty())
 }
 
+pub(super) struct SnapshotSystemResources {
+    pub(super) memory_total_bytes: u64,
+    pub(super) memory_available_bytes: u64,
+    pub(super) disk_path: String,
+    pub(super) disk_total_bytes: u64,
+    pub(super) disk_available_bytes: u64,
+}
+
+pub(super) fn sample_snapshot_system_resources() -> Option<SnapshotSystemResources> {
+    let mut system = sysinfo::System::new();
+    system.refresh_memory();
+    let memory_total_bytes = system.total_memory();
+    let memory_available_bytes = system.available_memory();
+    if memory_total_bytes == 0 {
+        return None;
+    }
+    let disks = sysinfo::Disks::new_with_refreshed_list();
+    let disk = pick_snapshot_disk(&disks)?;
+    Some(SnapshotSystemResources {
+        memory_total_bytes,
+        memory_available_bytes,
+        disk_path: disk.mount_point().to_string_lossy().into_owned(),
+        disk_total_bytes: disk.total_space(),
+        disk_available_bytes: disk.available_space(),
+    })
+}
+
+fn pick_snapshot_disk(disks: &sysinfo::Disks) -> Option<&sysinfo::Disk> {
+    let current = std::env::current_dir().ok();
+    if let Some(current) = current
+        .as_ref()
+        .and_then(|p| p.to_str().map(str::to_string))
+    {
+        let mut best: Option<&sysinfo::Disk> = None;
+        let mut best_len = 0;
+        for disk in disks.list() {
+            let mount = disk.mount_point().to_string_lossy().into_owned();
+            if current.starts_with(&mount) && mount.len() > best_len {
+                best_len = mount.len();
+                best = Some(disk);
+            }
+        }
+        if best.is_some() {
+            return best;
+        }
+    }
+    disks.list().iter().max_by_key(|disk| disk.total_space())
+}
+
 pub(super) fn dashboard_inventory_model_keys(model_name: &str) -> Vec<String> {
     let mut keys = Vec::new();
     push_dashboard_inventory_model_key(&mut keys, model_name.trim());
@@ -316,7 +365,17 @@ impl DashboardSnapshotProvider for RuntimeDashboardSnapshotProvider {
             }
             sort_dashboard_endpoint_rows(&mut webserver_rows);
 
+            let system_resources = sample_snapshot_system_resources();
             DashboardSnapshot {
+                system_memory_total_bytes: system_resources.as_ref().map(|r| r.memory_total_bytes),
+                system_memory_available_bytes: system_resources
+                    .as_ref()
+                    .map(|r| r.memory_available_bytes),
+                system_disk_path: system_resources.as_ref().map(|r| r.disk_path.clone()),
+                system_disk_total_bytes: system_resources.as_ref().map(|r| r.disk_total_bytes),
+                system_disk_available_bytes: system_resources
+                    .as_ref()
+                    .map(|r| r.disk_available_bytes),
                 llama_process_rows: process_rows
                     .into_iter()
                     .map(|process| DashboardProcessRow {

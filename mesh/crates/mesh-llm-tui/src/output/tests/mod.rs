@@ -407,6 +407,11 @@ fn snapshot_fixture(model_rows: usize, request_buckets: usize) -> DashboardSnaps
             })
             .collect(),
         latency_samples_ms: vec![11, 17, 19, 23],
+        system_memory_total_bytes: None,
+        system_memory_available_bytes: None,
+        system_disk_path: None,
+        system_disk_total_bytes: None,
+        system_disk_available_bytes: None,
     }
 }
 

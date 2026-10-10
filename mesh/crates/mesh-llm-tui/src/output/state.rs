@@ -6,7 +6,7 @@ use super::{
     PRETTY_DASHBOARD_REQUEST_WINDOW_BUCKETS, PRETTY_TUI_STARTUP_HISTORY_LIMIT, RuntimeStatus,
     format_invite_mesh_label,
 };
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use tokio::time::Instant;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -606,7 +606,12 @@ pub struct DashboardState {
     /// named, which the header says rather than omits: an absent field reads
     /// as a missing feature, not as a node on built-in defaults.
     pub(super) serving_strategy: Option<ServingStrategySummary>,
-    pub(super) peer_ids: BTreeSet<String>,
+    pub(super) peer_ids: BTreeMap<String, Option<String>>,
+    pub(super) system_memory_total_bytes: Option<u64>,
+    pub(super) system_memory_available_bytes: Option<u64>,
+    pub(super) system_disk_path: Option<String>,
+    pub(super) system_disk_total_bytes: Option<u64>,
+    pub(super) system_disk_available_bytes: Option<u64>,
     pub(super) llama_instances: Vec<LlamaInstanceState>,
     pub(super) multi_model_mode: Option<MultiModelModeState>,
     pub(super) passive_mode: Option<PassiveModeState>,
@@ -653,7 +658,12 @@ impl Default for DashboardState {
             node_id: None,
             mesh_id: None,
             runtime_ready: false,
-            peer_ids: BTreeSet::new(),
+            peer_ids: BTreeMap::new(),
+            system_memory_total_bytes: None,
+            system_memory_available_bytes: None,
+            system_disk_path: None,
+            system_disk_total_bytes: None,
+            system_disk_available_bytes: None,
             llama_instances: Vec::new(),
             multi_model_mode: None,
             passive_mode: None,

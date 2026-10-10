@@ -395,6 +395,11 @@ impl DashboardState {
                 &snapshot.loaded_model_rows,
             );
         }
+        self.system_memory_total_bytes = snapshot.system_memory_total_bytes;
+        self.system_memory_available_bytes = snapshot.system_memory_available_bytes;
+        self.system_disk_path = snapshot.system_disk_path.clone();
+        self.system_disk_total_bytes = snapshot.system_disk_total_bytes;
+        self.system_disk_available_bytes = snapshot.system_disk_available_bytes;
         self.sync_truthful_startup_statuses();
         self.request_history = DashboardRequestHistoryState::from_snapshot(snapshot);
         self.clamp_all_panel_views();
@@ -1165,8 +1170,8 @@ impl DashboardState {
                 join_token_view.scroll_offset = 0;
                 join_token_view.selected_row = None;
             }
-            OutputEvent::PeerJoined { peer_id, .. } => {
-                self.peer_ids.insert(peer_id.clone());
+            OutputEvent::PeerJoined { peer_id, label, .. } => {
+                self.peer_ids.insert(peer_id.clone(), label.clone());
             }
             OutputEvent::PeerLeft { peer_id, .. } => {
                 self.peer_ids.remove(peer_id);
