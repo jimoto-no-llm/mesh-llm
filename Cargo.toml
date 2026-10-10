@@ -108,6 +108,9 @@ strum = { version = "0.28", features = ["derive"] }
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 too_many_lines = "warn"
+# Hot-loop discipline: the full workspace is currently perf-clean, so keep
+# the perf group on. CI denies warnings, which turns these into a gate.
+perf = "warn"
 
 # Do not remove this section: direct GGUF debug startup spends most of its time
 # hashing the source model via sha2/blake3 before native skippy model open,

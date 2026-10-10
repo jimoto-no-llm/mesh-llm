@@ -25,6 +25,14 @@ with the detected system package manager; on macOS it installs lld with
 Homebrew. On Windows it installs the Rust LLVM tools with rustup. Set
 `MESH_LLM_SCCACHE_VERSION` only when deliberately testing a newer cache binary.
 
+Without sccache (for example on a machine where it cannot be installed),
+unset the wrapper for that shell instead of editing the checked-in Cargo
+configuration:
+
+```bash
+export RUSTC_WRAPPER=""
+```
+
 **macOS**: Apple Silicon. Metal is used automatically. Install the accelerated
 linker with `brew install lld`; the repository probes `ld64.lld` against the
 active SDK and uses Apple ld when that installed version is incompatible.

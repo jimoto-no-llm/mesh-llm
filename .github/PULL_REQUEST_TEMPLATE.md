@@ -18,3 +18,5 @@ How does this PR fix the problem? Call out compatibility, protocol, or migration
 
 - [ ] I ran the relevant local checks, or explained why they do not apply.
 - [ ] UI changes include screenshots or video, or explain why visual aids are not needed.
+
+<!-- Rust changes: format touched files, run cargo check plus cargo clippy --all-targets -- -D warnings per touched crate (-p mesh-llm too when reachable from the binary), run the relevant tests, and keep just check-commits green for the title. See AGENTS.md Pre-Commit Checklist. -->

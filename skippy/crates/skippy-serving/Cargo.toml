@@ -49,3 +49,7 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+[lints.clippy]
+# Hot-loop discipline for the embedded serving path; CI denies warnings.
+perf = "warn"

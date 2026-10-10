@@ -25,6 +25,8 @@ Always use `just`. Never build manually. Bare `just` (or `just build`) builds Sk
 
 `cargo check` and `cargo build` do not count as complete product builds: they skip native ABI preparation and the console, and `cargo check` produces no binary. Choose the owning product's `AGENTS.md` for product-specific build and packaging commands. See `CONTRIBUTING.md` for the full workflow.
 
+`.cargo/` requires `sccache`. When it is unavailable, export `RUSTC_WRAPPER=""` for that shell instead of editing the checked-in Cargo configuration.
+
 ## Shared module design
 
 Do not introduce generic buckets.

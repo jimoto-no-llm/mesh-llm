@@ -40,3 +40,7 @@ cachegen-spike = ["dep:cubecl", "cubecl/cpu", "cubecl/wgpu"]
 [[example]]
 name = "cachegen_cubecl_spike"
 required-features = ["cachegen-spike"]
+
+[lints.clippy]
+# Hot-loop discipline for prefix-match and eviction paths; CI denies warnings.
+perf = "warn"
