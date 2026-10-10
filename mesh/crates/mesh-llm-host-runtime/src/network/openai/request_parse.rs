@@ -185,6 +185,12 @@ pub struct BufferedHttpRequest {
 }
 
 impl BufferedHttpRequest {
+    /// Payload bytes after transfer decoding, before compatibility rewrites.
+    /// Transparent forwarding retains its separate raw HTTP representation.
+    pub(crate) fn decoded_body_bytes(&self) -> &[u8] {
+        self.body_bytes.as_deref().unwrap_or_default()
+    }
+
     /// Whether this is the product tokenizer capability route.
     ///
     /// This deliberately requires the exact method and path. Tokenization is

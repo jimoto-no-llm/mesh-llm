@@ -4,7 +4,7 @@ use super::{
         is_trusted_local_request, request_host, request_origin, requires_trusted_local_access,
     },
     assets::{respond_console_asset, respond_console_index},
-    http::{http_body_text, respond_error},
+    http::respond_error,
     routes::dispatch_request,
 };
 use crate::{inference::election, network::proxy};
@@ -207,7 +207,9 @@ pub(crate) async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> an
     let method = request.method.as_str();
     let path = request.path.as_str();
     let path_only = path.split('?').next().unwrap_or(path);
-    let body = http_body_text(&request.raw);
+    // The raw request retains its transfer framing for transparent proxies.
+    // Local management handlers consume the payload decoded by the reader.
+    let body = std::str::from_utf8(request.decoded_body_bytes()).unwrap_or("");
     if state.capture_node.swarm_capture_enabled() {
         state
             .capture_node

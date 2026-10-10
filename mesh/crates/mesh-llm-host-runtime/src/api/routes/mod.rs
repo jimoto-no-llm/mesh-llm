@@ -79,7 +79,7 @@ pub(super) const DISPATCH_REQUEST: DispatchRequestFn =
                     Ok(true)
                 }
                 ("GET" | "POST" | "DELETE", "/mcp") => {
-                    mcp::handle(stream, state, raw_request).await?;
+                    mcp::handle(stream, state, raw_request, body).await?;
                     Ok(true)
                 }
                 ("POST", "/api/runtime/pick-directory") => {
