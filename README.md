@@ -4,315 +4,211 @@
 
 ![Mesh LLM web console](mesh.png)
 
-Mesh LLM pools GPUs and memory across machines and exposes the result as one
-OpenAI-compatible API at `http://localhost:9337/v1`. Start one node, add more
-nodes later, and let the mesh decide whether a model runs locally, routes to a
-peer, or uses Skippy stage splits for models that are too large for one box.
+> **地元フォーク（jimoto-no-llm/mesh-llm）です。**
+> 上流の [Mesh-LLM/mesh-llm](https://github.com/Mesh-LLM/mesh-llm) をもとに、日本語での開発と運用を前提に整備しているフォークです。プロトコルやワイヤ形式の互換は壊さない方針です。フォーク独自の案内は [JIMOTO.md](JIMOTO.md) にまとめています。
 
-## Mesh and standalone Skippy
+Mesh LLM は複数マシンの GPU とメモリを束ね、1つの OpenAI 互換 API（`http://localhost:9337/v1`）として公開します。まず1ノードで始め、後からノードを足せます。モデルをローカル実行するか、ピアに回すか、1台に載らないモデルを Skippy のステージ分割で動かすかはメッシュが決めます。
 
-[Skippy](skippy/README.md) owns model management, native inference, split
-execution and OpenAI serving. [Mesh](mesh/README.md) adds peer discovery,
-transport, routing, plugins and the console around the same Skippy serving
-implementation.
+## Mesh と単体 Skippy
 
-The source lives in those two product trees. They share one root Cargo workspace
-and lockfile. Product crates, authored docs, scripts and evaluations live with
-their owner; Mesh also owns the website and SDKs. Root `docs/` is generated
-website output.
+[Skippy](skippy/README.md) がモデル管理・ネイティブ推論・分割実行・OpenAI 互換サーブを担います。[Mesh](mesh/README.md) は同じ Skippy 実装のまわりにピア探索・転送・ルーティング・プラグイン・コンソールを足したものです。
 
-Bare `just` (or `just build`) builds the standalone Skippy product (patched
-llama.cpp runtime and `skippy` CLI) first, then the MeshLLM host and console.
-Use `just skippy` to build Skippy alone, `just mesh` to rebuild only MeshLLM,
-or `just skippy-cli-build` for only the Skippy CLI. Skippy's separately packaged
-native runtime can be supplied with `--runtime-bundle`. See
-[Skippy configuration](skippy/docs/CONFIGURATION.md)
-and [split serving](skippy/docs/SKIPPY_SPLITS.md).
+ソースはこの2つのプロダクトツリーにあります。1つのルート Cargo ワークスペースとロックファイルを共有します。プロダクトのクレート・自作ドキュメント・スクリプト・評価は持ち主の側に置きます。Mesh はウェブサイトと SDK も持ちます。ルートの `docs/` は生成されたウェブサイト出力です。
 
-## Quick start
+素の `just`（または `just build`）は、先に単体の Skippy 製品（パッチ済み llama.cpp ランタイムと `skippy` CLI）をビルドし、次に MeshLLM ホストとコンソールをビルドします。Skippy だけなら `just skippy`、MeshLLM だけ作り直すなら `just mesh`、Skippy CLI だけなら `just skippy-cli-build` です。Skippy の個別パッケージ化したネイティブ ランタイムは `--runtime-bundle` で渡せます。[Skippy の設定](skippy/docs/CONFIGURATION.md)と[分割サーブ](skippy/docs/SKIPPY_SPLITS.md)も参照してください。
 
-Install the latest release executable:
+## 上流との違い
+
+- **日本語第一のドキュメント。** この README とフォーク案内 [JIMOTO.md](JIMOTO.md) を日本語で整備します。
+- **推論の高速化。** スケジューラのホットループの確保削減など、効くところから手を入れています。
+- **開発ルールの整備。** Clippy の perf ゲート、ツールチェイン手順、PR テンプレートを固定しています。
+- **レビュー必須の運用。** main は承認必須・squash のみ・線形履歴で保護し、ラベル体系と CODEOWNERS を備えています。
+- **互換維持。** メッシュのプロトコルやプラグイン規約を壊す変更はしません。壊れる場合は事前に明示します。
+
+## クイックスタート
+
+このフォークはソースビルドが基本です。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/mesh-llm/main/install.sh | bash
+git clone https://github.com/jimoto-no-llm/mesh-llm
+cd mesh-llm
+just build
 ```
 
-On Windows, use PowerShell:
+必要なものは `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24 です。`just bootstrap-build-tools` で sccache とリンカを入れられます。sccache を入れられない環境では、そのシェルで `export RUSTC_WRAPPER=""` とします。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) をどうぞ。
 
-```powershell
-irm https://raw.githubusercontent.com/Mesh-LLM/mesh-llm/main/install.ps1 | iex
-```
-
-Install the Apple Silicon Homebrew formula with
-`brew install Mesh-LLM/tap/mesh-llm`. Versioned formulas, Ubuntu and Arch
-packages, checksums, SBOMs, and OCI images are produced by the public
-[`Mesh-LLM/mesh-packaging`](https://github.com/Mesh-LLM/mesh-packaging)
-repository. See the [platform install guides](https://meshllm.cloud/docs/pages/installing-mesh/)
-for the supported package matrix and install commands.
-
-Finish setup:
+セットアップを仕上げます：
 
 ```bash
 mesh-llm setup
 ```
 
-On Windows PowerShell, use `mesh-llm.exe setup`. *(For native Windows notes, and for the optional WSL2 setup and multi-node LAN clustering, see the [Windows & WSL2 Troubleshooting Guide](#-windows--wsl2-troubleshooting).)*
+Windows PowerShell では `mesh-llm.exe setup` です（ネイティブ Windows の注意と、任意の WSL2 構成・複数ノード LAN クラスタは[こちら](#-windows--wsl2-トラブルシュート)）。
 
-To remove an executable install later, preview the cleanup first:
+実行形式のインストールを後で消すときは、先に確認してから消します：
 
 ```bash
 mesh-llm uninstall --dry-run
 mesh-llm uninstall --yes
 ```
 
-Uninstall preserves `~/.mesh-llm` configuration and identity data unless you
-explicitly pass `--purge-config`.
+`~/.mesh-llm` の設定と ID データは、`--purge-config` を付けない限り残ります。
 
-Join the public mesh and start serving:
+公開メッシュに参加してサーブを開始します：
 
 ```bash
 mesh-llm serve --auto
 ```
 
-That command chooses a backend flavor, downloads a suitable model if needed,
-joins the best discovered public mesh, starts the local API on port `9337`, and
-starts the web console on port `3131`.
+この1行でバックエンド種別を選び、必要ならモデルを落とし、見つかった最良の公開メッシュに参加し、ローカル API（ポート `9337`）と Web コンソール（ポート `3131`）を起動します。
 
-Check available models:
+モデル一覧の確認：
 
 ```bash
-curl -s http://localhost:9337/v1/models | jq '.data[].id'
+curl -s http://localhost:9337/v1/models | jq ".data[].id"
 ```
 
-Send an OpenAI-compatible request:
+OpenAI 互換リクエストの送信：
 
 ```bash
-curl http://localhost:9337/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"GLM-4.7-Flash-Q4_K_M","messages":[{"role":"user","content":"hello"}]}'
+curl http://localhost:9337/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"GLM-4.7-Flash-Q4_K_M","messages":[{"role":"user","content":"hello"}]}'
 ```
 
-For server deployments, add `--headless` to hide the web UI while keeping the
-management API on the `--console` port:
+サーバ用途では `--headless` を付けると Web UI を隠し、`--console` ポートの管理 API だけ残します：
 
 ```bash
 mesh-llm serve --auto --headless
 ```
 
-## Pick the workflow you need
+## 目的別の使い方
 
-| Goal | Command | Full guide |
+| 目的 | コマンド | 詳しい手順 |
 |---|---|---|
-| Try the public mesh | `mesh-llm serve --auto` | [docs/MESHES.md](mesh/docs/MESHES.md) |
-| Start a private mesh | `mesh-llm serve --model Qwen3-8B-Q4_K_M` | [docs/MESHES.md](mesh/docs/MESHES.md) |
-| Serve one model without mesh networking (debugging/dev) | `mesh-llm serve --local-model-only --gguf /models/model.gguf` | OpenAI API defaults to `127.0.0.1:9337` (`--port` and `--listen-all` change it) |
-| Publish your own mesh | `mesh-llm serve --model Qwen3-8B-Q4_K_M --publish` | [docs/MESHES.md](mesh/docs/MESHES.md) |
-| Join by invite token | `mesh-llm serve --join <token>` | [docs/MESHES.md](mesh/docs/MESHES.md) |
-| Run an API-only client | `mesh-llm client --auto` | [docs/MESHES.md](mesh/docs/MESHES.md) |
-| Run a big model with splits | `mesh-llm serve --model hf://meshllm/<repo>@<rev> --split` | [docs/SKIPPY_SPLITS.md](skippy/docs/SKIPPY_SPLITS.md) |
-| Run DeepSeek V4 and other ds4 models with DwarfStar | `mesh-llm plugins install Mesh-LLM/ds4-plugin` | [Setup and configuration](mesh/docs/plugins/dwarfstar.md) |
-| Attach a Flash-MoE SSD backend | `mesh-llm serve` with `[[plugin]] name = "flash-moe"` | [docs/plugins/flash-moe.md](mesh/docs/plugins/flash-moe.md) |
-| Fan out one prompt to every model in the mesh | `curl ... -d '{"model":"mesh", ...}'` | [docs/design/MOA_GATEWAY.md](mesh/docs/design/MOA_GATEWAY.md) |
-| Use Goose, OpenCode, Claude Code, or Pi | `mesh-llm goose`, `mesh-llm opencode`, `mesh-llm claude`, `mesh-llm pi` | [docs/AGENTS.md](mesh/docs/AGENTS.md) |
-| Build or contribute | `just build` | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| 公開メッシュを試す | `mesh-llm serve --auto` | [docs/MESHES.md](mesh/docs/MESHES.md) |
+| プライベートメッシュを立てる | `mesh-llm serve --model Qwen3-8B-Q4_K_M` | [docs/MESHES.md](mesh/docs/MESHES.md) |
+| メッシュ通信なしで1モデルだけ出す（デバッグ・開発用） | `mesh-llm serve --local-model-only --gguf /models/model.gguf` | OpenAI API は既定で `127.0.0.1:9337`（`--port` と `--listen-all` で変更可） |
+| 自分のメッシュを公開する | `mesh-llm serve --model Qwen3-8B-Q4_K_M --publish` | [docs/MESHES.md](mesh/docs/MESHES.md) |
+| 招待トークンで参加する | `mesh-llm serve --join <token>` | [docs/MESHES.md](mesh/docs/MESHES.md) |
+| API 専用クライアントで動く | `mesh-llm client --auto` | [docs/MESHES.md](mesh/docs/MESHES.md) |
+| 大きいモデルを分割で動かす | `mesh-llm serve --model hf://meshllm/<repo>@<rev> --split` | [docs/SKIPPY_SPLITS.md](skippy/docs/SKIPPY_SPLITS.md) |
+| DeepSeek V4 などの ds4 モデルを DwarfStar で動かす | `mesh-llm plugins install Mesh-LLM/ds4-plugin` | [セットアップと設定](mesh/docs/plugins/dwarfstar.md) |
+| Flash-MoE の SSD バックエンドを付ける | `[[plugin]] name = "flash-moe"` 付きで `mesh-llm serve` | [docs/plugins/flash-moe.md](mesh/docs/plugins/flash-moe.md) |
+| 1プロンプトをメッシュ内全モデルに振る | モデルに `mesh` を指定 | [docs/design/MOA_GATEWAY.md](mesh/docs/design/MOA_GATEWAY.md) |
+| Goose・OpenCode・Claude Code・Pi をつなぐ | `mesh-llm goose`・`mesh-llm opencode`・`mesh-llm claude`・`mesh-llm pi` | [docs/AGENTS.md](mesh/docs/AGENTS.md) |
+| ビルド・開発に参加する | `just build` | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-## How the mesh works
+## 仕組み
 
-- **Single-machine fit first.** If one node can host the full model, it serves
-  the model locally without stage traffic.
-- **Mesh routing.** Every node exposes the same `/v1` API. Requests are routed
-  by the `model` field to the peer that can serve that model.
-- **Encrypted peer transport.** QUIC end-to-end encrypts traffic between Mesh
-  nodes, including inference requests, responses, and split-model activations.
-  Iroh relays forward encrypted packets without reading their payload.
-- **Owner-control plane.** Operator config and inventory actions use an
-  additive `mesh-llm-control/1` lane with explicit endpoint bootstrap, while
-  public mesh join, gossip, routing, and inference stay on the public mesh
-  plane for mixed-version compatibility.
-- **Skippy stage splits.** Large dense models can load as package-backed layer
-  stages. The coordinator plans contiguous layer ranges, starts downstream
-  stages first, waits for readiness, then publishes the stage-0 route.
-- **Layer packages.** Package repositories contain `model-package.json` plus
-  GGUF fragments so peers fetch only the pieces needed for their assigned stage.
-- **Public discovery.** Published meshes advertise through Nostr discovery;
-  private meshes stay invite-token based.
+- **載るものは単機優先。** 1ノードでモデル全体を載せられるなら、ステージ間通信なしでローカルにサーブします。
+- **メッシュルーティング。** 全ノードが同じ `/v1` API を出します。リクエストは `model` 欄で、そのモデルを出せるピアへ振られます。
+- **暗号化されたピア転送。** Mesh ノード間は QUIC でエンドツーエンド暗号化します（推論の要求・応答・分割モデルの活性値ふくむ）。Iroh リレーは暗号化パケットを中身を読まずに運びます。
+- **オーナー管理面。** 運用者の設定・棚卸し操作は、明示的な立上げ付きの追加 `mesh-llm-control/1` レーンを使います。公開メッシュ参加・ゴシップ・ルーティング・推論は、混在バージョン互換のため公開メッシュ面に残します。
+- **Skippy ステージ分割。** 大きい密モデルはパッケージ裏付けの層ステージとして読めます。コーディネータが連続した層範囲を割り当て、下流ステージから先に起動し、準備ができてから stage-0 ルートを公開します。
+- **層パッケージ。** パッケージリポジトリは `model-package.json` と GGUF 断片を持ち、ピアは担当ステージに要る分だけ取ります。
+- **公開探索。** 公開メッシュは Nostr 探索で宣伝します。プライベートメッシュは招待トークン方式のままです。
 
-For a deeper operator guide, see [docs/USAGE.md](mesh/docs/USAGE.md). For every CLI
-command and switch, see [docs/CLI.md](mesh/docs/CLI.md).
+運用の詳しい手順は [docs/USAGE.md](mesh/docs/USAGE.md) へ。全 CLI コマンドとスイッチは [docs/CLI.md](mesh/docs/CLI.md) です。
 
-### Local model-only serving
+### ローカル単体サーブ
 
-> **Debugging and development endpoint.** `--local-model-only` wires the OpenAI
-> frontend directly to one local Skippy instance and bypasses mesh networking
-> entirely. The supported path for OpenAI clients in production — including tool
-> calls — is the regular mesh inference port, which includes the host-runtime
-> normalizer. Use `--local-model-only` when you want a lightweight single-process
-> setup without joining a mesh, not as a drop-in for the full serving path.
+> **デバッグ・開発用の口です。** `--local-model-only` は OpenAI フロントエンドを1つのローカル Skippy に直結し、メッシュ通信をまるごと省きます。ツール呼び出しふくむ本番の OpenAI クライアント向けは、ホストランタイムの正規化が入る通常のメッシュ推論ポートが正規の経路です。メッシュに入らず軽く1プロセスで出したいときに使い、フル機能の置換にはしないでください。
 
-Use the direct topology when a process should expose one complete local model
-through the OpenAI API without becoming a mesh node:
+1つの完全なローカルモデルを、メッシュノードにならず OpenAI API で出すときの形です：
 
 ```bash
-mesh-llm serve \
-  --local-model-only \
-  --gguf /models/model.gguf \
-  --port 9337
+mesh-llm serve --local-model-only --gguf /models/model.gguf --port 9337
 ```
 
-Use `--gguf <absolute-path>` to serve a specific GGUF file directly. `--model
-<absolute-path>` also works. Note that `--model <catalog-name>` does **not** work
-here — catalog and HF-ref resolution is a mesh function and is not available in
-the direct topology; the resulting error is not obvious. See the path requirements
-below.
+特定の GGUF を出すには `--gguf <絶対パス>` です。`--model <絶対パス>` も通ります。ただし `--model <カタログ名>` はここでは動きません。カタログ解決と HF 参照解決はメッシュ側の機能で、この直結形にはありません。出るエラーも分かりにくいので注意してください。
 
-This mode starts the OpenAI frontend and one local Skippy model runtime. It does
-not start QUIC, discovery, peer maintenance, split planning, plugins, release
-lookup, the web console, or the management API. Add `--listen-all` only when the
-OpenAI endpoint must bind beyond loopback. Startup fails if the complete model
-does not fit within detected local capacity (or `--max-vram`); it never falls
-back to distributed serving.
+この形では OpenAI フロントエンドと1つのローカル Skippy だけ起動します。QUIC・探索・ピア維持・分割計画・プラグイン・リリース参照・Web コンソール・管理 API は起動しません。OpenAI 口を loopback の外に出すときだけ `--listen-all` を付けます。モデル全体が検出容量（または `--max-vram`）に入らないと起動失敗します。分散サーブへのフォールバックはしません。
 
-Values passed to `--model`, `--gguf`, and `--mmproj` must be absolute paths and
-must not be symlinks. If you downloaded a model through
-Hugging Face, resolve the cache symlink before passing the path:
-`realpath <path-from-hf-cache>`.
+`--model`・`--gguf`・`--mmproj` に渡す値は絶対パスで、シンボリックリンク禁止です。Hugging Face から落としたモデルは、キャッシュの symlink を解決してから渡します。
 
-## Mixture-of-Agents (`model: "mesh"`) — experimental
+## Mixture-of-Agents（`model: "mesh"`）— 実験的
 
-> ⚠️ **Experimental.** The MoA gateway is new in this release. Behavior,
-> routing heuristics, error shapes, and tuning knobs may change between
-> versions while we tune it. Treat `model: "mesh"` as a preview feature
-> rather than a stable production path; use a specific model id when you
-> need stable semantics.
+> 実験的です。MoA ゲートウェイは新しい機能です。調整が進む間、挙動・ルーティング指針・エラー形・調整つまみは変わる可能性があります。安定した意味が必要ならモデル ID を指定してください。
 
-Send a request with `"model": "mesh"` and the proxy fans it out to every
-model available in the mesh in parallel, arbitrates their responses with
-deterministic logic, and returns one OpenAI-compatible reply. The arbiter
-runs in code (not as another model call) and only escalates to a reducer
-LLM on genuine conflict. Tool calls flow through the full pipeline.
+`"model": "mesh"` で投げると、プロキシがメッシュ内の全モデルへ並列に振り、決定的な logic で調停して1つの OpenAI 互換応答を返します。調停器はコードで動き（モデル呼び出しを重ねません）、本当の衝突のときだけ reducer LLM に上げます。ツール呼び出しも全パイプラインを通ります。
 
 ```bash
-curl http://localhost:9337/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"mesh","messages":[{"role":"user","content":"What is the capital of Japan?"}]}'
+curl http://localhost:9337/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"mesh","messages":[{"role":"user","content":"What is the capital of Japan?"}]}'
 ```
 
-Requires at least two distinct models in the mesh. See
-[docs/design/MOA_GATEWAY.md](mesh/docs/design/MOA_GATEWAY.md) for the
-architecture, arbitration rules, and tuning knobs.
+メッシュ内に2つ以上の異なるモデルが必要です。仕組み・調停則・調整つまみは [docs/design/MOA_GATEWAY.md](mesh/docs/design/MOA_GATEWAY.md) です。
 
+## 対応モデルファミリ
 
+Skippy ランタイムは llama.cpp とのファミリ parity を、査読済み GGUF 代表で追っています。現状の査読済み対応は P0/P1 で72行、parity 台帳全体では89行が certified で、Qwen・Llama・Gemma・Mistral・DeepSeek・GLM・MiniMax・Phi・Granite・Hunyuan・EXAONE・Cohere・Falcon・RWKV などをふくみます。
 
-## Supported model families
+分割マルチモーダルは Qwen2-VL・Qwen3-VL・Qwen3-VL-MoE・HunyuanOCR/Hunyuan-VL・DeepSeek-OCR が実 GGUF＋projector fixture で certified です。DeepSeek3 と EXAONE-MoE はフル GGUF が手元の基準機に載らないためパッケージ裏付けステージを使います。
 
-Mesh LLM's Skippy runtime tracks llama.cpp family parity with reviewed GGUF
-representatives. The current reviewed support set covers 72 P0/P1 family rows,
-with 89 certified rows in the full parity inventory, including Qwen, Llama,
-Gemma, Mistral, DeepSeek, GLM, MiniMax, Phi, Granite, Hunyuan, EXAONE, Cohere,
-Falcon, RWKV, and many others.
+全体の artifact・分割・wire dtype・キャッシュ方針・例外表は [docs/skippy/FAMILY_STATUS.md](skippy/docs/FAMILY_STATUS.md) です。残りの llama.cpp parity キューは [docs/skippy/LLAMA_PARITY.md](skippy/docs/LLAMA_PARITY.md) です。
 
-Split multimodal serving is certified for Qwen2-VL, Qwen3-VL,
-Qwen3-VL-MoE, HunyuanOCR/Hunyuan-VL, and DeepSeek-OCR using real GGUF plus
-projector fixtures. DeepSeek3 and EXAONE-MoE use package-backed stages because
-the full GGUFs are too large for the cheap local baseline.
+## インストールとビルドの注意
 
-See [docs/skippy/FAMILY_STATUS.md](skippy/docs/FAMILY_STATUS.md) for the full
-artifact, split, wire dtype, cache policy, and exception matrix. See
-[docs/skippy/LLAMA_PARITY.md](skippy/docs/LLAMA_PARITY.md) for the remaining
-llama.cpp parity queue.
+タグ付きリリースは macOS バンドルと、Linux CPU・Linux ARM64 CPU・Linux ARM64 CUDA・Linux CUDA・Linux CUDA Blackwell・Linux ROCm・Linux Vulkan・Windows CPU・Windows CUDA・Windows ROCm・Windows Vulkan バンドルを出します（上流の配布物。フォーク独自のリリースは [JIMOTO.md](JIMOTO.md) の計画を見てください）。Metal は macOS 専用です。全種別とも、OS/アーキテクチャごとの素のホスト1つ＋版付きネイティブ ランタイム1つの組合せです。Linux ARM64 CPU は `mesh-llm-aarch64-unknown-linux-gnu.tar.gz`、Linux ARM64 CUDA は `mesh-llm-aarch64-unknown-linux-gnu-cuda.tar.gz` です。`arm64` と `aarch64` は同じ64bit ARM です。可搬アーカイブはオフラインで動きます。ホストはユーザーキャッシュを見る前に隣の `native-runtimes/<runtime-id>` 配下を探します。
 
-## Install and build notes
-
-Tagged releases publish macOS bundles plus Linux CPU, Linux ARM64 CPU, Linux
-ARM64 CUDA, Linux CUDA, Linux CUDA Blackwell, Linux ROCm, Linux Vulkan, Windows
-CPU, Windows CUDA, Windows ROCm, and Windows Vulkan bundles. Metal is
-macOS-only. Every flavor is composed from the same backend-neutral host for its
-OS/architecture plus one versioned native runtime. The Linux ARM64 CPU artifact is
-`mesh-llm-aarch64-unknown-linux-gnu.tar.gz`; the Linux ARM64 CUDA artifact is
-`mesh-llm-aarch64-unknown-linux-gnu-cuda.tar.gz`. In install and release
-contexts, `arm64` and `aarch64` mean the same 64-bit ARM target. Portable
-archives work offline: the host discovers the adjacent
-`native-runtimes/<runtime-id>` tree before consulting the user cache.
-
-Build from source with `just`:
+ソースから `just` でビルドします：
 
 ```bash
-git clone https://github.com/Mesh-LLM/mesh-llm
+git clone https://github.com/jimoto-no-llm/mesh-llm
 cd mesh-llm
 just build
 ```
 
-Source builds require `just`, `cmake`, Rust, `sccache`, the platform fast linker
-(`mold` on Linux and lld on macOS/Windows), and Node.js 24 + npm. Cargo uses
-these defaults from the checked-in configuration, including plain `cargo
-build`. See [CONTRIBUTING.md](CONTRIBUTING.md) for installation commands and
-linker fallback behavior. To exercise the release boundary locally, build the
-neutral host and one runtime:
+ソースビルドには `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24＋npm が要ります。Cargo は素の `cargo build` ふくめ、リポジトリ設定の既定を使います。導入コマンドとリンカのフォールバックは [CONTRIBUTING.md](CONTRIBUTING.md) です。リリース境界だけ試すなら、素のホストとランタイム1つをビルドします：
 
 ```bash
 just release-host-build
-just release-runtime-build metal # or cpu, cuda, rocm, vulkan
-MESH_LLM_NATIVE_RUNTIME_BUNDLE_DIR="$PWD/dist/native-runtimes" \
-MESH_LLM_NATIVE_RUNTIME_CACHE_DIR="$(mktemp -d)" \
-  ./target/release/mesh-llm runtime list
+just release-runtime-build metal
+MESH_LLM_NATIVE_RUNTIME_BUNDLE_DIR="$PWD/dist/native-runtimes" MESH_LLM_NATIVE_RUNTIME_CACHE_DIR="$(mktemp -d)" ./target/release/mesh-llm runtime list
 ```
 
-CUDA runtimes need `nvcc`, ROCm runtimes need ROCm/HIP, and Vulkan runtimes need
-Vulkan development files plus `glslc`. See
-[docs/design/NATIVE_RUNTIMES.md](skippy/docs/design/NATIVE_RUNTIMES.md) for the
-manifest, discovery, and compatibility contract.
+CUDA ランタイムには `nvcc`、ROCm には ROCm/HIP、Vulkan には開発ファイルと `glslc` が要ります。[docs/design/NATIVE_RUNTIMES.md](skippy/docs/design/NATIVE_RUNTIMES.md) に manifest・探索・互換契約があります。
 
-The shipped `mesh-llm` executable uses embedded release attestation for
-provenance and admission hardening only. It does not apply to SDK, XCFramework,
-or other native artifacts, and it is not a runtime integrity proof. Verify a
-stamped packaged executable with `cargo run -p xtask -- release-attestation inspect --binary <path-to-packaged-mesh-llm> --public-key-file <release-signing-public-key.json>`.
-A packaged release binary reports `valid`, an unstamped local or dev build
-reports `missing`, and a binary that changed after packaging reports `invalid`.
-Bare `inspect --binary ...` is only enough to classify an unstamped binary as
-`missing`; stamped binaries require `--public-key-file` and otherwise report
-`invalid` with an explicit error. Post-download mutation can flip a stamped
-binary to `invalid`, but default startup still allows it.
+配布 `mesh-llm` 実行形式は、来歴と admission 強化のための組込みリリース認証を使います。SDK など他の成果物には適用されず、実行時 integrity 証明でもありません。詳しい検証手順は上流 README の該当節と `cargo run -p xtask -- release-attestation` のヘルプを見てください。
 
-## 🪟 Windows & WSL2 Troubleshooting
+## Windows と WSL2 のトラブルシュート
 
-### Running natively on Windows (NVIDIA)
+### ネイティブ Windows（NVIDIA）で動かす
 
-Native Windows CUDA works, including on CUDA 13.x drivers: GPU detection (`mesh-llm gpus`) and full-speed CUDA inference have been verified on driver 610.74 (CUDA UMD 13.3) with an RTX 4070 Ti. The earlier advice to switch to WSL2 when `mesh-llm` reported `0 GPUs` on CUDA 13 drivers predates the cuda12-runtime compatibility fix ([#1127](https://github.com/Mesh-LLM/mesh-llm/issues/1127)) and no longer applies to current releases.
+ネイティブ Windows CUDA は動きます。CUDA 13 系ドライバふくめ、GPU 検出（`mesh-llm gpus`）とフル速度 CUDA 推論は driver 610.74（CUDA UMD 13.3）＋RTX 4070 Ti で確認済みです。`mesh-llm` が CUDA 13 ドライバで `0 GPUs` と出すときに WSL2 へ逃がす旧アドバイスは、cuda12-runtime 互換修正より前の話で、今のリリースには当てはまりません。
 
-As of v0.76.0-rc8, three distribution/loading bugs still block the out-of-the-box native path. Until the fixes ship, this sequence works end to end:
+v0.76.0-rc8 時点で、配布・読込みのバグ3件がそのままの素通しを塞いでいます。修正が出るまで、この手順なら端まで通ります（番号は上流 Issues #1510・#1511・#1512 に対応します）：
 
-1. **Install the prerelease** — the stable v0.75.1 Windows bundles fail `install.ps1` verification ([#1510](https://github.com/Mesh-LLM/mesh-llm/issues/1510)):
+1. **プレリリースを入れる** — 安定版 v0.75.1 の Windows バンドルは `install.ps1` 検証で落ちます：
 
    ```powershell
    irm https://raw.githubusercontent.com/Mesh-LLM/mesh-llm/main/install.ps1 -OutFile install.ps1
-   .\install.ps1 -PreRelease
+   ./install.ps1 -PreRelease
    ```
 
-2. **Install the CUDA runtime from the product bundle** — `mesh-llm runtime install cuda` finds no windows/x86_64 runtimes in the release manifest ([#1511](https://github.com/Mesh-LLM/mesh-llm/issues/1511)). Download `mesh-llm-x86_64-pc-windows-msvc-cuda-12.zip` (or `-cuda-13.zip` for RTX 50-series and other Blackwell GPUs, which needs a CUDA 13 driver) for your installed version from the [releases page](https://github.com/Mesh-LLM/mesh-llm/releases), extract it, then:
+2. **製品バンドルから CUDA ランタイムを入れる** — `mesh-llm runtime install cuda` はリリース manifest に windows/x86_64 ランタイムを見つけません。使っている版の `mesh-llm-x86_64-pc-windows-msvc-cuda-12.zip`（RTX 50番台など Blackwell GPU は CUDA 13 ドライバの要る `-cuda-13.zip`）を上流の[リリース頁](https://github.com/Mesh-LLM/mesh-llm/releases)から落として展開し、次を実行します：
 
    ```powershell
-   mesh-llm runtime install --bundle-dir "<extracted>\mesh-bundle" cuda
+   mesh-llm runtime install --bundle-dir "<展開先>/mesh-bundle" cuda
    ```
 
-3. **Put the runtime's `lib` directory on `PATH` before serving** — runtime DLLs currently fail to load with `LoadLibraryExW` error 126 ([#1512](https://github.com/Mesh-LLM/mesh-llm/issues/1512)). Replace `<cuda>` with `cuda12` or `cuda13`, matching the bundle from step 2:
+3. **サーブ前にランタイムの `lib` を `PATH` に入れる** — ランタイム DLL がエラー126で読めません。手順2のバンドルに合わせ、`<cuda>` を `cuda12` か `cuda13` に置き換えます：
 
    ```powershell
-   $env:PATH = "$env:LOCALAPPDATA\mesh-llm\native-runtimes\<version>\meshllm-native-runtime-windows-x86_64-<cuda>\lib;" + $env:PATH
-   mesh-llm serve --local-model-only --model "C:\path\to\model.gguf"
+   $env:PATH = "$env:LOCALAPPDATA/mesh-llm/native-runtimes/<version>/meshllm-native-runtime-windows-x86_64-<cuda>/lib;" + $env:PATH
+   mesh-llm serve --local-model-only --model "C:/path/to/model.gguf"
    ```
 
-Good to know on native Windows:
+ネイティブ Windows の覚書：
 
-- `--local-model-only` requires an absolute path to a local `.gguf` file; catalog and Hugging Face refs are rejected in this mode.
-- Models download to `%LOCALAPPDATA%\huggingface\hub` (the Rust `hf-hub` convention) — a separate cache from the Python tools' `~\.cache\huggingface`.
-- `mesh-llm.exe` is not code-signed yet, so SmartScreen may prompt when launching it manually.
+- `--local-model-only` はローカル `.gguf` の絶対パス必須です。カタログと Hugging Face 参照はこの形では弾きます。
+- モデルは `%LOCALAPPDATA%/huggingface/hub` に落ちます（Rust の `hf-hub` 流儀）。Python 系の `~/.cache/huggingface` とは別キャッシュです。
+- `mesh-llm.exe` は未署名のため、手動起動で SmartScreen が出ることがあります。
 
-### Running under WSL2 (alternative)
+### WSL2 で動かす（代替案）
 
-WSL2 remains a solid alternative if you prefer the Linux CUDA runtimes or want the multi-node LAN setups described below.
+Linux CUDA ランタイム派や、複数ノード LAN 構成をやりたいなら WSL2 も堅い選択肢です。
 
-#### 1. Install CUDA 13.0 Toolkit inside WSL2
-Inside your Ubuntu WSL2 terminal, install `cuda-toolkit-13-0` to supply `libcudart.so.13`:
+#### 1. WSL2 内に CUDA 13.0 Toolkit を入れる
+WSL2 の Ubuntu 端末で `cuda-toolkit-13-0` を入れます：
 
 ```bash
 wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-wsl-ubuntu.pin
@@ -321,22 +217,11 @@ wget https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/
 sudo dpkg -i cuda-repo-wsl-ubuntu-13-0-local_13.0.0-1_amd64.deb
 sudo cp /var/cuda-repo-wsl-ubuntu-13-0-local/cuda-*-keyring.gpg /usr/share/keyrings/
 sudo apt-get update && sudo apt-get -y install cuda-toolkit-13-0
-
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda-13.0/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
 ```
 
-#### 2. Enable Hyper-V & Windows Firewall for WSL2 Mirrored Mode
-If you use WSL2 `networkingMode=mirrored` in `%UserProfile%\.wslconfig`, Windows 11 manages a separate **Hyper-V VM Firewall** that defaults to `Block` for inbound network traffic when third-party security software (e.g. Norton, McAfee) is present. 
-
-##### 2.1 Configure Mirrored Networking (`.wslconfig`) Part 1
-Create or edit `C:\Users\<username>\.wslconfig` on the Windows host:
-
-```powershell
-notepad $env:USERPROFILE\.wslconfig
-```
-
-##### 2.2 Configure Mirrored Networking (`.wslconfig`) Part 2
+#### 2. WSL2 ミラーモード向けにファイアウォールを整える
+WSL2 の `.wslconfig` で `networkingMode=mirrored` のとき、Windows 11 側の Hyper-V VM ファイアウォールが別にあり、サードパーティ製セキュリティソフト入りだと既定で inbound を塞ぎます。
+Windows 側で `C:/Users/<username>/.wslconfig` に次を書きます：
 
 ```ini
 [wsl2]
@@ -344,88 +229,51 @@ networkingMode=mirrored
 autoProxy=true
 ```
 
-##### 2.3 Restart WSL in Powershell
-
-Restart WSL in PowerShell:
-```powershell
-wsl --shutdown
-```
-
-##### 2.4 Enable Windows Firewall Needs
-
-To allow incoming LAN connections to the Web UI (`3131`) and P2P QUIC mesh transport (`9337`), run **PowerShell as Administrator** on the Windows host:
+PowerShell で `wsl --shutdown` して入れ直し、**管理者 PowerShell** で次を実行します：
 
 ```powershell
-# 1. Allow Inbound Traffic through the WSL Hyper-V VM Firewall Container
 $vmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
 Set-NetFirewallHyperVVMSetting -Name $vmCreatorId -DefaultInboundAction Allow
-
-# 2. Allow MeshLLM Ports in Windows Defender Firewall
 New-NetFirewallRule -DisplayName "MeshLLM TCP In" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 3131,9337 -Profile Any
 New-NetFirewallRule -DisplayName "MeshLLM UDP In" -Direction Inbound -Action Allow -Protocol UDP -LocalPort 9337,5353 -Profile Any
 ```
 
-#### 3. Match Model Paths for Direct LAN Reading
-To ensure worker nodes load GGUF model shards directly off local NVMe/SSD storage without streaming tens of gigabytes over the network, ensure the `--gguf` file path string is identical across all nodes (or use symlinks/bind mounts):
+#### 3. 直接 LAN 読み用にモデルパスを揃える
+ワーカーが GGUF 断片をネットワーク越しでなく手元の NVMe/SSD から直接読むため、`--gguf` のパス文字列を全ノードで揃えます：
 
 ```bash
-# Example: Mount or symlink model path on worker nodes
 sudo mkdir -p /mnt/d/models/
 sudo mount --bind /path/to/local/fast/nvme/ /mnt/d/models/
-
-# Launch Master and Worker with matching path strings
-mesh-llm --llama-flavor cuda serve \
-  --console 3131 \
-  --gguf "/mnt/d/models/model.gguf" \
-  --mesh-name "MainMesh" \
-  --listen-all \
-  --auto
+mesh-llm serve --gguf "/mnt/d/models/model.gguf" --listen-all --auto
 ```
 
-## Documentation hub
+## ドキュメントハブ
 
-| Doc | Use it for |
+| 資料 | 用途 |
 |---|---|
-| [docs/MESHES.md](mesh/docs/MESHES.md) | Private meshes, public discovery, publishing, invite tokens, API-only clients |
-| [docs/SKIPPY_SPLITS.md](skippy/docs/SKIPPY_SPLITS.md) | Running big models with package-backed Skippy stage splits |
-| [docs/LAYER_PACKAGE_REPOS.md](skippy/docs/LAYER_PACKAGE_REPOS.md) | Contributing and publishing layer package repositories |
-| [docs/AGENTS.md](mesh/docs/AGENTS.md) | Goose, Claude Code, OpenCode, Pi, curl, and blackboard |
-| [docs/EXO_COMPARISON.md](mesh/docs/EXO_COMPARISON.md) | Balanced comparison with Exo |
-| [docs/CLI.md](mesh/docs/CLI.md) | Command reference and JSON automation |
-| [docs/USAGE.md](mesh/docs/USAGE.md) | Longer operational usage guide, runtime control, owner-control operator flows |
-| [docs/design/TESTING.md](mesh/docs/design/TESTING.md) | Testing playbook, mixed-version QA, remote deploy checks |
-| [docs/plugins/flash-moe.md](mesh/docs/plugins/flash-moe.md) | Optional Flash-MoE SSD expert streaming backend setup |
-| [docs/plugins/dwarfstar.md](mesh/docs/plugins/dwarfstar.md) | DwarfStar (ds4) alternative engine setup on Apple Silicon |
-| [docs/skippy/FAMILY_STATUS.md](skippy/docs/FAMILY_STATUS.md) | Certified Skippy model-family status |
-| [docs/specs/layer-package-repos.md](skippy/docs/specs/layer-package-repos.md) | Manifest and artifact format spec |
-| [docs/specs/mesh-setup-installer.md](mesh/docs/specs/mesh-setup-installer.md) | Installer/bootstrap and setup command behavior spec |
+| [docs/MESHES.md](mesh/docs/MESHES.md) | プライベートメッシュ・公開探索・公開・招待トークン・API専用クライアント |
+| [docs/SKIPPY_SPLITS.md](skippy/docs/SKIPPY_SPLITS.md) | パッケージ裏付け Skippy ステージ分割で大きいモデルを動かす |
+| [docs/LAYER_PACKAGE_REPOS.md](skippy/docs/LAYER_PACKAGE_REPOS.md) | 層パッケージリポジトリの寄稿と公開 |
+| [docs/AGENTS.md](mesh/docs/AGENTS.md) | Goose・Claude Code・OpenCode・Pi・curl・blackboard |
+| [docs/EXO_COMPARISON.md](mesh/docs/EXO_COMPARISON.md) | Exo との冷静な比較 |
+| [docs/CLI.md](mesh/docs/CLI.md) | コマンドリファレンスと JSON 自動化 |
+| [docs/USAGE.md](mesh/docs/USAGE.md) | 長めの運用手順・ランタイム制御・オーナー管理フロー |
+| [docs/design/TESTING.md](mesh/docs/design/TESTING.md) | テスト手順・混在バージョン QA・リモート配備チェック |
+| [docs/plugins/flash-moe.md](mesh/docs/plugins/flash-moe.md) | 任意の Flash-MoE SSD エキスパート streaming バックエンド設定 |
+| [docs/plugins/dwarfstar.md](mesh/docs/plugins/dwarfstar.md) | Apple Silicon 向け DwarfStar（ds4）代替エンジン設定 |
+| [docs/skippy/FAMILY_STATUS.md](skippy/docs/FAMILY_STATUS.md) | 認定済み Skippy モデルファミリ状況 |
+| [JIMOTO.md](JIMOTO.md) | フォーク独自の案内（スマホ・リリース・運用） |
 
-## CI infrastructure
+## CI 基盤
 
-<a href="https://depot.dev">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-dark.svg">
-    <source media="(prefers-color-scheme: light)" srcset="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light.svg">
-    <img alt="Depot" src="https://depot.dev/assets/brand/1693758816/depot-logo-horizontal-on-light.svg" width="128">
-  </picture>
-</a>
+上流にならい、信頼済み `main` の Linux ジョブは Depot のマネージドランナーを使えます（リポジトリのランナー方針経由）。PR はキャッシュ隔離と保護ワークフローゲートが通るまで GitHub ホステッドのままです。詳しくは [`ci/DEPOT_MIGRATION.md`](ci/DEPOT_MIGRATION.md) です。
 
-Trusted `main` Linux jobs may use [Depot's managed GitHub Actions
-runners](https://depot.dev/docs/github-actions/overview) through the checked-in
-runner policy. Pull requests remain on GitHub-hosted runners until the cache
-isolation and protected-workflow gates in [`ci/DEPOT_MIGRATION.md`](ci/DEPOT_MIGRATION.md)
-are proven. Hardware-qualified GPU tests remain on dedicated runners.
+## コミュニティ
 
-## Community
+Mesh LLM は実験的な分散システムソフトです。バグ報告には、実行コマンド・基盤とバックエンド種別・あれば `/api/status` 出力・プライベート/公開/`--auto`参加の別を添えてください。報告先は[フォークの Issues](https://github.com/jimoto-no-llm/mesh-llm/issues) です。上流への報告は[上流リポジトリ](https://github.com/Mesh-LLM/mesh-llm)の流儀に従ってください。
 
-Mesh LLM is experimental distributed-systems software. When you report bugs,
-include the command you ran, platform/backend flavor, `/api/status` output if
-available, and whether the node was private, published, or joined with `--auto`.
+## 謝辞
 
-## Support
+このフォークは上流の [Mesh-LLM/mesh-llm](https://github.com/Mesh-LLM/mesh-llm) の成果の上にあります。上流プロジェクトと支援者に感謝します。
 
-<a href="https://spiral.xyz">
-  <img alt="Spiral" src="https://spiral.xyz/images/spiral-logo.svg" width="128">
-</a>
 
-The Mesh LLM project thanks [spiral.xyz](https://spiral.xyz) for their support.
