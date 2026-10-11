@@ -288,13 +288,10 @@ where
             }
             Ok(SplitRuntimeStart::Standby { coordinator }) => {
                 drop(startup_load_guard);
-                let _ = emit_event(OutputEvent::Info {
-                    message: format!(
-                        "Split runtime coordinator is {}; standing by for stage assignment",
-                        coordinator.fmt_short()
-                    ),
-                    context: Some(format!("model={model_ref}")),
-                });
+                let _ = emit_event(mesh_llm_events::split_assignment::split_coordinator_event(
+                    coordinator.to_string(),
+                    model_ref.to_string(),
+                ));
                 startup_reset_model_target(target_tx, model_name, console_state).await;
             }
             Err(err) => {

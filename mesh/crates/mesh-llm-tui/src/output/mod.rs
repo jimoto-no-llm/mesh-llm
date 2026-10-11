@@ -21,6 +21,7 @@ mod formatting;
 mod logging_projection;
 mod merging;
 pub(in crate::output) mod rendering;
+mod split_assignment;
 mod state;
 mod terminal_out;
 #[cfg(test)]

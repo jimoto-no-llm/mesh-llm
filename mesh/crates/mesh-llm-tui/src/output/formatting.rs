@@ -286,6 +286,13 @@ impl OutputEventPresentation for OutputEvent {
             OutputEvent::Info { message, context } => {
                 json!({ "message": message, "context": context })
             }
+            OutputEvent::SplitCoordinator { node_id, model } => {
+                json!({ "node_id": node_id, "model": model })
+            }
+            OutputEvent::SplitStages {
+                coordinator_id,
+                summary,
+            } => json!({ "coordinator_id": coordinator_id, "summary": summary }),
             OutputEvent::Startup { version, .. } => json!({ "version": version }),
             OutputEvent::LaunchPlan { plan } => json!({
                 "llama_process_count": plan.llama_process_rows.len(),
