@@ -282,8 +282,21 @@ class BuildUiScriptTests(unittest.TestCase):
             (ui_dir / "public").mkdir()
             env = os.environ.copy()
             env["MESH_LLM_SKIP_UI"] = "1"
+            # Isolated PATH with base tools only: the absence of pnpm must
+            # hold inside the test, not depend on the parent environment.
+            isolated_bin = Path(tmpdir) / "bin"
+            isolated_bin.mkdir()
+            for tool in (
+                "cat", "chmod", "cut", "dirname", "find", "grep",
+                "head", "mkdir", "pwd", "rm", "sh", "sort", "tr",
+                "uname",
+            ):
+                resolved = shutil.which(tool)
+                if resolved is not None:
+                    (isolated_bin / tool).symlink_to(resolved)
+            env["PATH"] = str(isolated_bin)
             self.assertIsNone(
-                shutil.which("pnpm", path=env.get("PATH", "")),
+                shutil.which("pnpm", path=env["PATH"]),
                 "direct UI test requires pnpm to be absent from PATH",
             )
             result = subprocess.run(
