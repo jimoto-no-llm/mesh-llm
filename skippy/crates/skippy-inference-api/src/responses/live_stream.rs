@@ -21,7 +21,10 @@ use super::{
     apply_agent_compat_response_defaults, now_unix_secs_i64,
     responses_stream_created_event_with_sequence, usage_to_responses_usage,
 };
-use crate::{InferenceResult, chat::ChatCompletionChunk, stream_lifecycle::StreamLifecycle};
+use crate::{
+    InferenceError, InferenceResult, chat::ChatCompletionChunk,
+    stream_lifecycle::StreamLifecycle,
+};
 
 /// One output item's slot in the response's `output` array.
 ///
@@ -50,6 +53,23 @@ struct StreamedToolCall {
     /// known, so the first announced item cannot carry a temporary identity.
     pending_argument_deltas: Vec<String>,
 }
+
+/// Maximum distinct tool calls folded into one live Responses stream.
+///
+/// OpenAI serves at most 128 parallel function calls per response, so more
+/// distinct upstream `index` values can only come from crafted fragments.
+/// Bounding entries also bounds `slots`, which grows once per tool call.
+const MAX_STREAMED_TOOL_CALLS: usize = 128;
+/// Maximum folded `function.arguments` bytes retained per tool call (pending
+/// deltas share the same bytes, so this caps both). Real argument payloads
+/// are kilobytes; 1 MiB leaves ample headroom while bounding per-stream
+/// memory no matter how many fragments arrive.
+const MAX_STREAMED_TOOL_ARGUMENTS_BYTES: usize = 1024 * 1024;
+/// Maximum argument fragments held back per tool call while its id or name
+/// is still unknown. Legitimate upstreams send both up front, so the
+/// backlog drains on every fold; thousands of anonymous fragments can only
+/// come from a fragment dribble aimed at multiplying `String` overhead.
+const MAX_PENDING_ARGUMENT_DELTAS: usize = 4096;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ResponseSseState {
@@ -273,6 +293,9 @@ fn fold_tool_call_delta(
     position: i64,
     delta: &Value,
 ) {
+    if state.failed {
+        return;
+    }
     let index = delta
         .get("index")
         .and_then(Value::as_i64)
@@ -285,6 +308,16 @@ fn fold_tool_call_delta(
         .unwrap_or_default();
 
     if !state.tool_calls.contains_key(&index) {
+        if state.tool_calls.len() >= MAX_STREAMED_TOOL_CALLS {
+            reject_over_limit(
+                state,
+                out,
+                format!(
+                    "too many streamed tool calls (limit {MAX_STREAMED_TOOL_CALLS})"
+                ),
+            );
+            return;
+        }
         let output_index = state.reserve_slot(OutputSlot::ToolCall(index));
         state.tool_calls.insert(
             index,
@@ -305,10 +338,40 @@ fn fold_tool_call_delta(
         entry.name = Some(name);
     }
     if !arguments.is_empty() {
+        // Pending deltas duplicate bytes already folded into `arguments`, so
+        // the byte budget below caps both accumulations at once.
+        let over_bytes =
+            entry.arguments.len() + arguments.len() > MAX_STREAMED_TOOL_ARGUMENTS_BYTES;
+        let over_pending =
+            entry.pending_argument_deltas.len() >= MAX_PENDING_ARGUMENT_DELTAS;
+        if over_bytes || over_pending {
+            let message = if over_bytes {
+                format!(
+                    "streamed tool call arguments exceed \
+                     {MAX_STREAMED_TOOL_ARGUMENTS_BYTES} bytes"
+                )
+            } else {
+                format!(
+                    "too many pending tool call argument fragments \
+                     (limit {MAX_PENDING_ARGUMENT_DELTAS})"
+                )
+            };
+            reject_over_limit(state, out, message);
+            return;
+        }
         entry.arguments.push_str(&arguments);
         entry.pending_argument_deltas.push(arguments);
     }
     emit_ready_tool_call(state, out, index, false);
+}
+
+/// Reject a stream that breached a folding limit: mark it failed so no tail
+/// follows, and surface the same `invalid_request` (400) error shape an
+/// upstream failure would carry. The protocol is unchanged — `error` events
+/// already exist on this path.
+fn reject_over_limit(state: &mut ResponseSseState, out: &mut Vec<Event>, message: String) {
+    state.failed = true;
+    push_event(out, "error", InferenceError::invalid_request(message).body());
 }
 
 /// Replay argument fragments after the item is announced. If an upstream

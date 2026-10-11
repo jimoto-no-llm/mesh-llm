@@ -207,7 +207,9 @@ pub async fn send_503(stream: ClientStream, reason: &str) -> std::io::Result<()>
     send_openai_error(stream, 503, reason, None).await
 }
 
-fn openai_error_body(status_code: u16, message: &str) -> Vec<u8> {
+// Shared with the translated Responses stream relay, which must reuse the exact
+// 400 body after the `200 OK` headers are already committed.
+pub(super) fn openai_error_body(status_code: u16, message: &str) -> Vec<u8> {
     let status =
         http::StatusCode::from_u16(status_code).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR);
     let kind = openai_error_kind_for_status(status_code);
