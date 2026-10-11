@@ -1093,17 +1093,20 @@ impl DashboardState {
 
     fn note_split_assignment(state: &mut DashboardState, message: &str) {
         if let Some(rest) = message.strip_prefix("Split runtime coordinator is ") {
+            let id = rest.split(';').next().unwrap_or(rest).trim();
+            if id.is_empty() {
+                return;
+            }
+            // The standby loop repeats this sentence. Keep a stage list that
+            // already names this coordinator. A different id replaces it.
             if state
                 .split_assignment
                 .as_ref()
-                .is_some_and(|summary| summary.contains("stage "))
+                .is_some_and(|summary| summary.contains(id))
             {
                 return;
             }
-            let id = rest.split(';').next().unwrap_or(rest).trim();
-            if !id.is_empty() {
-                state.split_assignment = Some(format!("coordinator {id}"));
-            }
+            state.split_assignment = Some(format!("coordinator {id}"));
             return;
         }
         if let Some(rest) = message.strip_prefix("Split stages ") {
@@ -1126,6 +1129,7 @@ impl DashboardState {
                 self.version = Some(version.clone());
                 self.runtime_ready = false;
                 self.launch_plan = None;
+                self.split_assignment = None;
                 self.ready_llama_process_rows.clear();
             }
             OutputEvent::LaunchPlan { plan } => {

@@ -1488,7 +1488,7 @@ pub(super) fn dashboard_header_always_reports_whether_a_strategy_is_in_force() {
 }
 
 #[test]
-fn split_assignment_stays_on_the_status_line() {
+fn split_assignment_lists_every_stage_and_follows_a_new_coordinator() {
     let mut state = DashboardState::default();
     state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
         message: "Split runtime coordinator is abcdef0123; standing by for stage assignment"
@@ -1500,10 +1500,26 @@ fn split_assignment_stays_on_the_status_line() {
         Some("coordinator abcdef0123")
     );
 
+    let stages =
+        "stage 0 abcdef0123 layers 0-20 ready coordinator; stage 1 1234abcdff layers 21-35 loading";
     state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
-        message: "Split stages stage 0 abcdef0123 layers 0-20 ready coordinator; stage 1 1234abcdff layers 21-35 loading".to_string(),
+        message: format!("Split stages {stages}"),
         context: None,
     }));
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
+        message: "Split runtime coordinator is abcdef0123; standing by for stage assignment"
+            .to_string(),
+        context: None,
+    }));
+    assert_eq!(state.split_assignment.as_deref(), Some(stages));
+    assert_eq!(
+        split_assignment_lines(stages),
+        vec![
+            "stage 0 abcdef0123 layers 0-20 ready coordinator",
+            "stage 1 1234abcdff layers 21-35 loading",
+        ]
+    );
+
     state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
         message: "Split runtime coordinator is ffffffff99; standing by for stage assignment"
             .to_string(),
@@ -1511,20 +1527,12 @@ fn split_assignment_stays_on_the_status_line() {
     }));
     assert_eq!(
         state.split_assignment.as_deref(),
-        Some(
-            "stage 0 abcdef0123 layers 0-20 ready coordinator; stage 1 1234abcdff layers 21-35 loading"
-        )
+        Some("coordinator ffffffff99")
     );
 
-    let line = dashboard_status_line(&state, 160);
-    let rendered: String = line
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect();
-    assert!(
-        rendered.contains("split:"),
-        "status line should pin the assignment: {rendered}"
-    );
-    assert!(rendered.contains("stage 0"));
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::Startup {
+        version: "0.78.0".to_string(),
+        message: None,
+    }));
+    assert_eq!(state.split_assignment, None);
 }

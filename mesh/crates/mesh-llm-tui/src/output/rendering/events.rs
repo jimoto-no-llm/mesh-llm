@@ -52,27 +52,46 @@ pub(in crate::output) fn render_events_panel_with_renderer(
     }
 }
 
+pub(in crate::output) fn split_assignment_lines(summary: &str) -> Vec<&str> {
+    summary
+        .split("; ")
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
 fn split_assignment_list_area(frame: &mut Frame, state: &DashboardState, inner_area: Rect) -> Rect {
     let Some(summary) = state.split_assignment.as_deref() else {
         return inner_area;
     };
-    if inner_area.height < 2 {
+    let lines = split_assignment_lines(summary);
+    if lines.is_empty() || inner_area.height == 0 {
         return inner_area;
     }
-    let text = truncate_with_ellipsis(summary, usize::from(inner_area.width.max(1)));
-    frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            text,
-            Style::default().fg(tui_theme().text),
-        ))),
-        Rect {
+    let banner_height = u16::try_from(lines.len())
+        .unwrap_or(u16::MAX)
+        .min(inner_area.height);
+    let width = usize::from(inner_area.width.max(1));
+    for (index, line) in lines.iter().take(usize::from(banner_height)).enumerate() {
+        let text = truncate_with_ellipsis(line, width);
+        let row = Rect {
+            y: inner_area
+                .y
+                .saturating_add(u16::try_from(index).unwrap_or(0)),
             height: 1,
             ..inner_area
-        },
-    );
+        };
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                text,
+                Style::default().fg(tui_theme().text),
+            ))),
+            row,
+        );
+    }
     Rect {
-        y: inner_area.y.saturating_add(1),
-        height: inner_area.height.saturating_sub(1),
+        y: inner_area.y.saturating_add(banner_height),
+        height: inner_area.height.saturating_sub(banner_height),
         ..inner_area
     }
 }
