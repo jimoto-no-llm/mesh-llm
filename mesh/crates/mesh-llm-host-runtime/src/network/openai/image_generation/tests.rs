@@ -31,7 +31,7 @@ fn url_responses_are_rejected_because_peers_cannot_reach_the_server() {
     for format in [json!("url"), json!("png"), json!(1)] {
         let invalid = invalid_parameter(&json!({"prompt": "x", "response_format": format}))
             .expect("rejected response_format");
-        assert_eq!(invalid.param, "response_format");
+        assert_eq!(invalid.param, Some("response_format"));
         let body = invalid.error_body();
         assert_eq!(body["error"]["type"], "invalid_request_error");
         assert_eq!(body["error"]["param"], "response_format");
@@ -43,12 +43,40 @@ fn image_counts_outside_the_openai_range_are_rejected() {
     for n in [json!(0), json!(11), json!(-1), json!(2.5), json!("2")] {
         let invalid =
             invalid_parameter(&json!({"prompt": "x", "n": n})).expect("rejected image count");
-        assert_eq!(invalid.param, "n", "{n}");
+        assert_eq!(invalid.param, Some("n"), "{n}");
     }
 }
 
 /// Answer one request with `IMAGE_RESPONSE` and hand back what was received.
 async fn spawn_image_server() -> (
+    String,
+    oneshot::Receiver<Vec<u8>>,
+    tokio::task::JoinHandle<()>,
+) {
+    spawn_server(|_| IMAGE_RESPONSE.to_string()).await
+}
+
+/// Like LocalAI: inline images only when the request asks for `b64_json`,
+/// otherwise a URL on the server itself.
+async fn spawn_url_default_server() -> (
+    String,
+    oneshot::Receiver<Vec<u8>>,
+    tokio::task::JoinHandle<()>,
+) {
+    spawn_server(|body| {
+        if body["response_format"] == "b64_json" {
+            IMAGE_RESPONSE.to_string()
+        } else {
+            r#"{"created":1767225600,"data":[{"url":"http://127.0.0.1:8080/generated-images/b64.png"}]}"#
+                .to_string()
+        }
+    })
+    .await
+}
+
+async fn spawn_server(
+    respond: fn(&Value) -> String,
+) -> (
     String,
     oneshot::Receiver<Vec<u8>>,
     tokio::task::JoinHandle<()>,
@@ -61,14 +89,32 @@ async fn spawn_image_server() -> (
             return;
         };
         let request = read_http_request(&mut stream).await;
+        let body = respond(&forwarded_json(&request));
         let _ = request_tx.send(request);
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{IMAGE_RESPONSE}",
-            IMAGE_RESPONSE.len()
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
         );
         let _ = stream.write_all(response.as_bytes()).await;
     });
     (base_url, request_rx, handle)
+}
+
+/// JSON body of a captured request, read through its declared Content-Length.
+fn forwarded_json(raw: &[u8]) -> Value {
+    let header_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map_or(raw.len(), |end| end + 4);
+    serde_json::from_slice(&raw[header_end..]).unwrap_or(Value::Null)
+}
+
+/// A local URL that refuses connections, like a stopped image server.
+async fn refusing_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    drop(listener);
+    format!("http://{addr}/v1")
 }
 
 async fn read_http_request(stream: &mut TcpStream) -> Vec<u8> {
@@ -245,6 +291,77 @@ async fn other_endpoints_for_an_image_model_never_reach_its_server() {
     server.abort();
 }
 
+/// Servers such as LocalAI return a URL unless asked for `b64_json`; the mesh
+/// asks for inline images whenever the client did not choose a format.
+#[tokio::test]
+async fn unset_response_format_is_forwarded_as_inline_images() {
+    for response_format in [None, Some(Value::Null), Some(json!("b64_json"))] {
+        let (base_url, server_request, server) = spawn_url_default_server().await;
+        let node = node_with_image_endpoint(&base_url).await;
+        let (addr, ingress) = spawn_ingress(node).await;
+        let mut body = generation_body(MODEL);
+        if let Some(response_format) = response_format.clone() {
+            body["response_format"] = response_format;
+        }
+
+        let response = post(addr, "/v1/images/generations", "", &body).await;
+
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        assert!(
+            response.contains(r#""b64_json""#),
+            "{response_format:?}: {response}"
+        );
+        assert!(
+            !response.contains(r#""url""#),
+            "{response_format:?}: {response}"
+        );
+        let forwarded = forwarded_json(&server_request.await.unwrap());
+        assert_eq!(forwarded["response_format"], "b64_json", "{forwarded}");
+        assert_eq!(forwarded["prompt"], "a lighthouse at dusk", "{forwarded}");
+        ingress.abort();
+        server.abort();
+    }
+}
+
+/// A body the mesh cannot rewrite must not reach a server that defaults to URLs.
+#[tokio::test]
+async fn non_json_image_requests_are_rejected_before_the_server() {
+    let (base_url, mut server_request, server) = spawn_url_default_server().await;
+    let node = node_with_image_endpoint(&base_url).await;
+    let (addr, ingress) = spawn_ingress(node).await;
+    let body = generation_body(MODEL).to_string();
+    let request = format!(
+        "POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).await.unwrap();
+    let response = String::from_utf8_lossy(&response).into_owned();
+
+    assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+    assert!(response.contains("application/json"), "{response}");
+    assert!(server_request.try_recv().is_err());
+    ingress.abort();
+    server.abort();
+}
+
+#[tokio::test]
+async fn local_server_failure_without_a_peer_answers_503() {
+    let node = node_with_image_endpoint(&refusing_url().await).await;
+    let (addr, ingress) = spawn_ingress(node).await;
+
+    let response = post(addr, "/v1/images/generations", "", &generation_body(MODEL)).await;
+
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    assert!(
+        response.contains("image endpoint for model 'sd-turbo' failed"),
+        "{response}"
+    );
+    ingress.abort();
+}
+
 #[tokio::test]
 async fn url_response_format_is_rejected_before_the_server() {
     let (base_url, mut server_request, server) = spawn_image_server().await;
@@ -328,7 +445,7 @@ async fn start_tunnel_node() -> (mesh::Node, mesh::TunnelChannels, tempfile::Tem
     let relay_urls = Vec::new();
     let relay_auths = HashMap::new();
     let (node, channels) = mesh::Node::start(
-        // Clients get an ephemeral identity; the serving node is promoted below.
+        // Clients get an ephemeral identity; `advertise` promotes serving nodes.
         mesh::NodeRole::Client,
         mesh::RelayConfig {
             urls: &relay_urls,
@@ -354,35 +471,64 @@ async fn start_tunnel_node() -> (mesh::Node, mesh::TunnelChannels, tempfile::Tem
     (node, channels, directory)
 }
 
+async fn advertise(node: &mesh::Node, base_url: &str) {
+    *node.role.lock().await = mesh::NodeRole::Worker;
+    node.advertise_image_endpoint(&ImageEndpoint::parse(MODEL, base_url).unwrap(), 9337)
+        .await;
+}
+
+/// Two loopback nodes that have exchanged gossip: `peer` serves `MODEL` from
+/// `peer_url` and accepts mesh HTTP tunnels; `entry` may serve it as well.
+struct ImageMesh {
+    entry: mesh::Node,
+    peer: mesh::Node,
+    _tunnels: TunnelManager,
+    _targets: watch::Sender<election::ModelTargets>,
+    _entry_channels: mesh::TunnelChannels,
+    _configs: [tempfile::TempDir; 2],
+}
+
+async fn image_mesh(peer_url: &str, entry_url: Option<&str>) -> ImageMesh {
+    let (peer, peer_channels, peer_config) = start_tunnel_node().await;
+    let (entry, entry_channels, entry_config) = start_tunnel_node().await;
+    let tunnels = TunnelManager::start(
+        peer.clone(),
+        peer_channels.rpc,
+        peer_channels.http,
+        peer_channels.stage,
+    )
+    .await
+    .expect("start peer tunnel manager");
+    let (targets, targets_rx) = watch::channel(election::ModelTargets::default());
+    tunnels.set_http_ingress(targets_rx, AffinityRouter::new());
+    advertise(&peer, peer_url).await;
+    if let Some(entry_url) = entry_url {
+        advertise(&entry, entry_url).await;
+    }
+    peer.start_accepting();
+    entry.start_accepting();
+    entry
+        .connect_to_peer(peer.endpoint_addr_for_advertisement())
+        .await
+        .expect("connect test nodes");
+    assert_eq!(entry.hosts_for_model(MODEL).await, vec![peer.id()]);
+    ImageMesh {
+        entry,
+        peer,
+        _tunnels: tunnels,
+        _targets: targets,
+        _entry_channels: entry_channels,
+        _configs: [peer_config, entry_config],
+    }
+}
+
 /// A node without an image model routes the request over the mesh to the
 /// peer that advertises it, and that peer's image endpoint answers.
 #[tokio::test]
 async fn image_request_reaches_the_peer_that_advertises_the_model() {
     let (base_url, server_request, server) = spawn_image_server().await;
-    let (serving, serving_channels, _serving_config) = start_tunnel_node().await;
-    let (asking, asking_channels, _asking_config) = start_tunnel_node().await;
-    *serving.role.lock().await = mesh::NodeRole::Worker;
-    let tunnels = TunnelManager::start(
-        serving.clone(),
-        serving_channels.rpc,
-        serving_channels.http,
-        serving_channels.stage,
-    )
-    .await
-    .expect("start serving tunnel manager");
-    let (_targets_tx, targets_rx) = watch::channel(election::ModelTargets::default());
-    tunnels.set_http_ingress(targets_rx, AffinityRouter::new());
-    serving
-        .advertise_image_endpoint(&ImageEndpoint::parse(MODEL, &base_url).unwrap(), 9337)
-        .await;
-    serving.start_accepting();
-    asking.start_accepting();
-    asking
-        .connect_to_peer(serving.endpoint_addr_for_advertisement())
-        .await
-        .expect("connect test nodes");
-    assert_eq!(asking.hosts_for_model(MODEL).await, vec![serving.id()]);
-    let (addr, ingress) = spawn_ingress(asking.clone()).await;
+    let mesh = image_mesh(&base_url, None).await;
+    let (addr, ingress) = spawn_ingress(mesh.entry.clone()).await;
 
     let response = post(addr, "/v1/images/generations", "", &generation_body(MODEL)).await;
 
@@ -395,5 +541,110 @@ async fn image_request_reaches_the_peer_that_advertises_the_model() {
     );
     ingress.abort();
     server.abort();
-    drop((tunnels, asking_channels));
+}
+
+/// A stopped local server must not hide a healthy peer while the health
+/// check has not yet withdrawn the local advertisement.
+#[tokio::test]
+async fn local_server_failure_falls_back_to_a_peer_with_the_model() {
+    let (peer_url, peer_request, peer_server) = spawn_url_default_server().await;
+    let mesh = image_mesh(&peer_url, Some(&refusing_url().await)).await;
+    let (addr, ingress) = spawn_ingress(mesh.entry.clone()).await;
+
+    let response = post(addr, "/v1/images/generations", "", &generation_body(MODEL)).await;
+
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    assert!(response.contains(r#""b64_json""#), "{response}");
+    let forwarded = forwarded_json(&peer_request.await.unwrap());
+    assert_eq!(forwarded["response_format"], "b64_json", "{forwarded}");
+    ingress.abort();
+    peer_server.abort();
+}
+
+/// `x-mesh-target` naming this node pins the request even when its server fails.
+#[tokio::test]
+async fn pinned_local_server_failure_does_not_fall_back() {
+    let (peer_url, mut peer_request, peer_server) = spawn_image_server().await;
+    let mesh = image_mesh(&peer_url, Some(&refusing_url().await)).await;
+    let target = format!(
+        "x-mesh-target: {}\r\n",
+        hex::encode(mesh.entry.id().as_bytes())
+    );
+    let (addr, ingress) = spawn_ingress(mesh.entry.clone()).await;
+
+    let response = post(
+        addr,
+        "/v1/images/generations",
+        &target,
+        &generation_body(MODEL),
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    assert!(peer_request.try_recv().is_err());
+    ingress.abort();
+    peer_server.abort();
+}
+
+/// A node reached over the mesh answers for itself: when its own server is
+/// down it must not send the request back out, or two nodes with stopped
+/// servers would bounce it between them.
+#[tokio::test]
+async fn request_from_a_peer_is_not_forwarded_again() {
+    let (entry_url, mut entry_request, entry_server) = spawn_image_server().await;
+    let mesh = image_mesh(&refusing_url().await, Some(&entry_url)).await;
+    assert_eq!(
+        mesh.peer.hosts_for_model(MODEL).await,
+        vec![mesh.entry.id()]
+    );
+
+    let body = generation_body(MODEL).to_string();
+    let request = format!(
+        "POST /v1/images/generations HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let (mut send, mut recv) = mesh
+        .entry
+        .open_http_tunnel(mesh.peer.id())
+        .await
+        .expect("open HTTP tunnel");
+    send.write_all(request.as_bytes())
+        .await
+        .expect("write tunneled request");
+    send.finish().expect("finish tunneled request");
+    let wire = recv
+        .read_to_end(1024 * 1024)
+        .await
+        .expect("read tunneled response");
+    let response = String::from_utf8_lossy(&wire).into_owned();
+
+    assert!(response.starts_with("HTTP/1.1 503"), "{response}");
+    assert!(
+        entry_request.try_recv().is_err(),
+        "the peer must not route the request back to the entry node"
+    );
+    entry_server.abort();
+}
+
+#[test]
+fn only_the_entry_node_tries_peers_for_an_unpinned_request() {
+    fn scope(
+        target: Option<iroh::EndpointId>,
+        excluded: &[iroh::EndpointId],
+        from_peer: bool,
+    ) -> ImageRouteScope<'_> {
+        ImageRouteScope {
+            target,
+            excluded,
+            from_peer,
+        }
+    }
+    let node_id = iroh::SecretKey::generate().public();
+    let other = iroh::SecretKey::generate().public();
+    assert!(scope(None, &[], false).may_try_peers());
+    assert!(!scope(None, &[], true).may_try_peers());
+    assert!(!scope(Some(node_id), &[], false).may_try_peers());
+    assert!(scope(Some(node_id), &[], false).allows(node_id));
+    assert!(!scope(Some(other), &[], false).allows(node_id));
+    assert!(!scope(None, &[node_id], false).allows(node_id));
 }

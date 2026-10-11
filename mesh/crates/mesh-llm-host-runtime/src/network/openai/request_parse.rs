@@ -17,6 +17,7 @@ mod body_rewrite;
 mod chunked;
 mod effective_entity;
 mod framing;
+pub(crate) use body_rewrite::replace_json_body;
 pub use body_rewrite::{inject_skippy_hooks_flag, rewrite_model_field};
 use chunked::{ChunkedDecoder, try_decode_chunked_body};
 use framing::{append_request_framing, request_framing};

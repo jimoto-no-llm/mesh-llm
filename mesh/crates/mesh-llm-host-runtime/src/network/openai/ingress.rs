@@ -1051,8 +1051,11 @@ async fn route_missing_local_model(
         tcp_stream,
         request,
         model_name,
-        target,
-        excluded,
+        super::image_generation::ImageRouteScope {
+            target,
+            excluded,
+            from_peer: ctx.requested_by_node_id.is_some(),
+        },
         route_observer,
     )
     .await
