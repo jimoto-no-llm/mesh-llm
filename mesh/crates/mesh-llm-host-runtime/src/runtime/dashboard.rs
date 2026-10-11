@@ -242,11 +242,19 @@ fn pick_snapshot_disk(disks: &sysinfo::Disks) -> Option<&sysinfo::Disk> {
                 best = Some(disk);
             }
         }
-        if best.is_some() {
-            return best;
+        if let Some(best) = best {
+            return if best.total_space() == 0 {
+                None
+            } else {
+                Some(best)
+            };
         }
     }
-    disks.list().iter().max_by_key(|disk| disk.total_space())
+    disks
+        .list()
+        .iter()
+        .max_by_key(|disk| disk.total_space())
+        .filter(|disk| disk.total_space() != 0)
 }
 
 pub(super) fn dashboard_inventory_model_keys(model_name: &str) -> Vec<String> {

@@ -1934,3 +1934,133 @@ pub(super) fn tui_narrow_dashboard_keeps_the_model_name_readable() {
         "the model name must stay recognizable at 100 columns:\n{rendered}"
     );
 }
+
+#[test]
+pub(super) fn status_peer_summary_at_narrow_width_shows_count_only() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(16_000_000_000),
+        system_memory_available_bytes: Some(4_000_000_000),
+        system_disk_path: Some(String::from("/")),
+        system_disk_total_bytes: Some(500_000_000_000),
+        system_disk_available_bytes: Some(200_000_000_000),
+        ..snapshot_fixture(0, 30)
+    }));
+    for (peer_id, label) in [("peer-aaaabbbbcccc", "alice"), ("peer-ddddeeeeffff", "bob")] {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: peer_id.to_string(),
+            label: Some(label.to_string()),
+        }));
+    }
+
+    assert_eq!(tui_peer_summary_for_width(&state, 60), "2");
+    assert!(!should_show_status_resource_metrics(60));
+    let text = spans_plain_text(&dashboard_status_line(&state, 60).spans);
+    assert!(text.contains("peers: 2"), "expected peer count in {text}");
+    assert!(
+        !text.contains("alice"),
+        "60 cols must omit peer names: {text}"
+    );
+    assert!(!text.contains("mem:"), "60 cols must omit memory: {text}");
+    assert!(!text.contains("disk:"), "60 cols must omit disk: {text}");
+}
+
+#[test]
+pub(super) fn status_peer_summary_at_medium_width_shows_names_without_metrics() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(16_000_000_000),
+        system_memory_available_bytes: Some(4_000_000_000),
+        system_disk_path: Some(String::from("/")),
+        system_disk_total_bytes: Some(500_000_000_000),
+        system_disk_available_bytes: Some(200_000_000_000),
+        ..snapshot_fixture(0, 30)
+    }));
+    for (peer_id, label) in [("peer-aaaabbbbcccc", "alice"), ("peer-ddddeeeeffff", "bob")] {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: peer_id.to_string(),
+            label: Some(label.to_string()),
+        }));
+    }
+
+    let summary = tui_peer_summary_for_width(&state, 120);
+    assert!(
+        summary.contains("alice"),
+        "120 cols must show names: {summary}"
+    );
+    assert!(!should_show_status_resource_metrics(120));
+    let text = spans_plain_text(&dashboard_status_line(&state, 120).spans);
+    assert!(text.contains("alice"), "expected peer names in {text}");
+    assert!(!text.contains("mem:"), "120 cols must omit memory: {text}");
+    assert!(!text.contains("disk:"), "120 cols must omit disk: {text}");
+}
+
+#[test]
+pub(super) fn status_resource_metrics_appear_at_wide_width() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(16_000_000_000),
+        system_memory_available_bytes: Some(4_000_000_000),
+        system_disk_path: Some(String::from("/")),
+        system_disk_total_bytes: Some(500_000_000_000),
+        system_disk_available_bytes: Some(200_000_000_000),
+        ..snapshot_fixture(0, 30)
+    }));
+    for (peer_id, label) in [("peer-aaaabbbbcccc", "alice"), ("peer-ddddeeeeffff", "bob")] {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: peer_id.to_string(),
+            label: Some(label.to_string()),
+        }));
+    }
+
+    assert!(should_show_status_resource_metrics(240));
+    let text = spans_plain_text(&dashboard_status_line(&state, 240).spans);
+    assert!(text.contains("alice"), "expected peer names in {text}");
+    assert!(text.contains("mem:"), "240 cols must show memory: {text}");
+    assert!(text.contains("disk:"), "240 cols must show disk: {text}");
+}
+
+#[test]
+pub(super) fn status_peer_summary_truncates_long_name_lists() {
+    assert_eq!(STATUS_PEER_SUMMARY_MAX_CHARS, 40);
+    let mut state = DashboardState::default();
+    for index in 0..6 {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: format!("peer-{index:04}-abcdefgh"),
+            label: Some(format!("very-long-peer-label-{index:02}")),
+        }));
+    }
+
+    let summary = tui_peer_list_summary(&state);
+    assert!(
+        summary.chars().count() <= STATUS_PEER_SUMMARY_MAX_CHARS,
+        "summary must fit the cap: {summary}"
+    );
+    assert!(
+        summary.ends_with("…"),
+        "capped summary must end with ellipsis: {summary}"
+    );
+    assert_eq!(tui_peer_summary_for_width(&state, 240), summary);
+}
+
+#[test]
+pub(super) fn status_line_smoke_renders_at_80_columns() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(snapshot_fixture(0, 30)));
+    for (peer_id, label) in [("peer-aaaabbbbcccc", "alice"), ("peer-ddddeeeeffff", "bob")] {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: peer_id.to_string(),
+            label: Some(label.to_string()),
+        }));
+    }
+
+    let text = spans_plain_text(&dashboard_status_line(&state, 80).spans);
+    assert!(text.contains("peers: 2"), "expected peer count in {text}");
+    // 80 cols and below can overflow the key-hint legend in the real frame,
+    // so the frame side of the smoke only checks the render succeeds.
+    let rendered = render_tui_frame_snapshot(&state, 80, 24);
+    assert!(
+        rendered.contains("Mesh Events"),
+        "expected events panel in frame: {rendered}"
+    );
+}

@@ -161,6 +161,10 @@ pub(super) enum TuiEventRow<'a> {
     Padding,
 }
 
+pub(in crate::output) const STATUS_PEER_NAMES_MIN_WIDTH: u16 = 100;
+pub(in crate::output) const STATUS_RESOURCE_METRICS_MIN_WIDTH: u16 = 140;
+pub(in crate::output) const STATUS_PEER_SUMMARY_MAX_CHARS: usize = 40;
+
 pub(in crate::output) type TuiTerminal = Terminal<CrosstermBackend<TerminalOut>>;
 pub(in crate::output) fn dashboard_status_line(
     state: &DashboardState,
@@ -183,7 +187,11 @@ pub(in crate::output) fn dashboard_status_line(
     push_status_key_hint(&mut left_spans, "R", "Refresh");
 
     let mut right_spans = Vec::new();
-    push_status_metric(&mut right_spans, "peers", tui_peer_list_summary(state));
+    push_status_metric(
+        &mut right_spans,
+        "peers",
+        tui_peer_summary_for_width(state, width),
+    );
     push_status_metric(
         &mut right_spans,
         "models",
@@ -194,11 +202,13 @@ pub(in crate::output) fn dashboard_status_line(
         "processes",
         visible_process_count(state).to_string(),
     );
-    if let Some(memory) = tui_memory_summary(state) {
-        push_status_metric(&mut right_spans, "mem", memory);
-    }
-    if let Some(disk) = tui_disk_summary(state) {
-        push_status_metric(&mut right_spans, "disk", disk);
+    if should_show_status_resource_metrics(width) {
+        if let Some(memory) = tui_memory_summary(state) {
+            push_status_metric(&mut right_spans, "mem", memory);
+        }
+        if let Some(disk) = tui_disk_summary(state) {
+            push_status_metric(&mut right_spans, "disk", disk);
+        }
     }
     push_status_metric(&mut right_spans, "uptime", dashboard_uptime_label(state));
     right_spans.push(status_separator_span());
@@ -267,15 +277,25 @@ pub(in crate::output) fn tui_peer_list_summary(state: &DashboardState) -> String
     if state.peer_ids.len() > 3 {
         summary.push_str(", …");
     }
-    const MAX_SUMMARY_CHARS: usize = 40;
-    if summary.chars().count() > MAX_SUMMARY_CHARS {
+    if summary.chars().count() > STATUS_PEER_SUMMARY_MAX_CHARS {
         summary = summary
             .chars()
-            .take(MAX_SUMMARY_CHARS - 1)
+            .take(STATUS_PEER_SUMMARY_MAX_CHARS - 1)
             .collect::<String>()
             + "…";
     }
     summary
+}
+
+pub(in crate::output) fn tui_peer_summary_for_width(state: &DashboardState, width: u16) -> String {
+    if width < STATUS_PEER_NAMES_MIN_WIDTH {
+        return state.peer_ids.len().to_string();
+    }
+    tui_peer_list_summary(state)
+}
+
+pub(in crate::output) fn should_show_status_resource_metrics(width: u16) -> bool {
+    width >= STATUS_RESOURCE_METRICS_MIN_WIDTH
 }
 
 fn format_bytes_gb(bytes: u64) -> String {
