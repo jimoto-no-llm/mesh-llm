@@ -607,6 +607,9 @@ pub struct DashboardState {
     /// as a missing feature, not as a node on built-in defaults.
     pub(super) serving_strategy: Option<ServingStrategySummary>,
     pub(super) peer_ids: BTreeSet<String>,
+    /// Split coordinator and stage assignment, pinned so it stays visible
+    /// after the info event scrolls out of the events panel.
+    pub(super) split_assignment: Option<String>,
     pub(super) llama_instances: Vec<LlamaInstanceState>,
     pub(super) multi_model_mode: Option<MultiModelModeState>,
     pub(super) passive_mode: Option<PassiveModeState>,
@@ -654,6 +657,7 @@ impl Default for DashboardState {
             mesh_id: None,
             runtime_ready: false,
             peer_ids: BTreeSet::new(),
+            split_assignment: None,
             llama_instances: Vec::new(),
             multi_model_mode: None,
             passive_mode: None,

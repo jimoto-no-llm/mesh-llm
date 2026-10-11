@@ -9,6 +9,7 @@ import {
   filterOptionLabel,
   roleLabel,
   rowAriaLabel,
+  splitAssignmentLabel,
   statusLabel,
   type FilterKey,
   type FilterOption,
@@ -51,7 +52,7 @@ function RolePill({ role }: { role: NonNullable<PeerDTO['role']> }) {
 }
 
 function StatusPill({ peer }: { peer: PeerDTO }) {
-  const label = statusLabel(peer)
+  const label = peer.waitingForCoordinator ? `Waiting for ${peer.waitingForCoordinator}` : statusLabel(peer)
   const tone = meshStatusTone(peer)
 
   return (
@@ -196,6 +197,11 @@ export function PeerRow({ peer, active, isLast, onSelect, onHoverPeerIdChange }:
               <span className="min-w-0 truncate font-mono text-[length:var(--density-type-caption-lg)] leading-tight text-fg-dim">
                 {hostname ?? '—'}
               </span>
+              {splitAssignmentLabel(peer) && (
+                <span className="min-w-0 truncate font-mono text-[length:var(--density-type-caption-lg)] leading-tight text-fg-dim">
+                  {splitAssignmentLabel(peer)}
+                </span>
+              )}
             </div>
           </PeerValueTooltip>
           <PeerValueTooltip content={hostedModelsTooltip}>

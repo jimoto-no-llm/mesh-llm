@@ -1091,6 +1091,29 @@ impl DashboardState {
         true
     }
 
+    fn note_split_assignment(state: &mut DashboardState, message: &str) {
+        if let Some(rest) = message.strip_prefix("Split runtime coordinator is ") {
+            if state
+                .split_assignment
+                .as_ref()
+                .is_some_and(|summary| summary.contains("stage "))
+            {
+                return;
+            }
+            let id = rest.split(';').next().unwrap_or(rest).trim();
+            if !id.is_empty() {
+                state.split_assignment = Some(format!("coordinator {id}"));
+            }
+            return;
+        }
+        if let Some(rest) = message.strip_prefix("Split stages ") {
+            let summary = rest.trim();
+            if !summary.is_empty() {
+                state.split_assignment = Some(summary.to_string());
+            }
+        }
+    }
+
     pub(super) fn apply_output_event(&mut self, event: &OutputEvent) {
         self.record_startup_history_event(event);
 
@@ -1171,8 +1194,8 @@ impl DashboardState {
             OutputEvent::PeerLeft { peer_id, .. } => {
                 self.peer_ids.remove(peer_id);
             }
-            OutputEvent::Info { .. }
-            | OutputEvent::Warning { .. }
+            OutputEvent::Info { message, .. } => Self::note_split_assignment(self, message),
+            OutputEvent::Warning { .. }
             | OutputEvent::RpcServerStarting { .. }
             | OutputEvent::RpcReady { .. }
             | OutputEvent::RpcStartupFailed { .. }

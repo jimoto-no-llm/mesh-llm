@@ -203,9 +203,13 @@ pub(super) async fn start_runtime_split_model(
     let (canonical_coordinator, settled_membership) = match coordinator_start {
         CanonicalCoordinatorGate::Coordinator(membership) => (spec.node.id(), membership),
         CanonicalCoordinatorGate::Standby { coordinator } => {
+            spec.node.note_split_coordinator(coordinator).await;
             return Ok(SplitRuntimeStart::Standby { coordinator });
         }
     };
+    spec.node
+        .note_split_coordinator(canonical_coordinator)
+        .await;
 
     let run_id = format!("mesh-split-{}", now_unix_nanos());
     let topology_id = format!("topology-{run_id}");

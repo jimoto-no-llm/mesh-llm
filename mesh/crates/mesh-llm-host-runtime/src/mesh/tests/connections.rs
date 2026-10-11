@@ -394,6 +394,7 @@ async fn make_test_node_with_requirements(
         model_runtime_descriptors: Arc::new(Mutex::new(Vec::new())),
         hosted_models: Arc::new(Mutex::new(Vec::new())),
         llama_ready: Arc::new(Mutex::new(false)),
+        split_coordinator: Arc::new(Mutex::new(None)),
         available_models: Arc::new(Mutex::new(Vec::new())),
         requested_models: Arc::new(Mutex::new(Vec::new())),
         explicit_model_interests: Arc::new(Mutex::new(Vec::new())),

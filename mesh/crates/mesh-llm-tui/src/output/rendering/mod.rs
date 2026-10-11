@@ -183,6 +183,13 @@ pub(in crate::output) fn dashboard_status_line(
     push_status_key_hint(&mut left_spans, "R", "Refresh");
 
     let mut right_spans = Vec::new();
+    if let Some(summary) = state.split_assignment.as_deref() {
+        push_status_metric(
+            &mut right_spans,
+            "split",
+            truncate_status_value(summary, 42),
+        );
+    }
     push_status_metric(&mut right_spans, "peers", state.peer_ids.len().to_string());
     push_status_metric(
         &mut right_spans,
@@ -220,6 +227,15 @@ pub(in crate::output) fn status_spans_width(spans: &[Span<'_>]) -> usize {
 
 pub(in crate::output) fn status_gap_span(width: usize) -> Span<'static> {
     Span::raw(" ".repeat(width))
+}
+
+fn truncate_status_value(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let keep = max_chars.saturating_sub(1);
+    let truncated: String = value.chars().take(keep).collect();
+    format!("{truncated}…")
 }
 
 pub(in crate::output) fn push_status_metric(

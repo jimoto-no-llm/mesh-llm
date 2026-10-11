@@ -496,6 +496,7 @@ pub(crate) mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         assert_eq!(

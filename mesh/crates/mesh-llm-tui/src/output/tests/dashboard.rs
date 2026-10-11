@@ -1486,3 +1486,45 @@ pub(super) fn dashboard_header_always_reports_whether_a_strategy_is_in_force() {
         "{rendered}"
     );
 }
+
+#[test]
+fn split_assignment_stays_on_the_status_line() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
+        message: "Split runtime coordinator is abcdef0123; standing by for stage assignment"
+            .to_string(),
+        context: Some("model=demo".to_string()),
+    }));
+    assert_eq!(
+        state.split_assignment.as_deref(),
+        Some("coordinator abcdef0123")
+    );
+
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
+        message: "Split stages stage 0 abcdef0123 layers 0-20 ready coordinator; stage 1 1234abcdff layers 21-35 loading".to_string(),
+        context: None,
+    }));
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::Info {
+        message: "Split runtime coordinator is ffffffff99; standing by for stage assignment"
+            .to_string(),
+        context: None,
+    }));
+    assert_eq!(
+        state.split_assignment.as_deref(),
+        Some(
+            "stage 0 abcdef0123 layers 0-20 ready coordinator; stage 1 1234abcdff layers 21-35 loading"
+        )
+    );
+
+    let line = dashboard_status_line(&state, 160);
+    let rendered: String = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect();
+    assert!(
+        rendered.contains("split:"),
+        "status line should pin the assignment: {rendered}"
+    );
+    assert!(rendered.contains("stage 0"));
+}

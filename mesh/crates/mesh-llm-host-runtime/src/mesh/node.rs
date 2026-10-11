@@ -68,6 +68,17 @@ pub struct RouteEntry {
     pub vram_gb: f64,
 }
 
+/// Coordinator chosen by split election on this node.
+///
+/// `node_id` is the full endpoint id. `short_node_id` is the same id operators
+/// already see on `/api/status` (`node_id` and `peers[].id`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct SplitCoordinatorObservation {
+    pub(crate) node_id: String,
+    pub(crate) short_node_id: String,
+    pub(crate) elected_at_unix_ms: u64,
+}
+
 #[derive(Clone)]
 pub struct Node {
     pub(crate) endpoint: Endpoint,
@@ -92,6 +103,10 @@ pub struct Node {
     pub(crate) model_runtime_descriptors: Arc<Mutex<Vec<ModelRuntimeDescriptor>>>,
     pub(crate) hosted_models: Arc<Mutex<Vec<String>>>,
     pub(crate) llama_ready: Arc<Mutex<bool>>,
+    /// Split coordinator elected for the running model. Empty until this node
+    /// runs split startup. The timestamp stays at the first observation of an
+    /// id and moves only when a different coordinator is elected.
+    pub(crate) split_coordinator: Arc<Mutex<Option<SplitCoordinatorObservation>>>,
     pub(crate) available_models: Arc<Mutex<Vec<String>>>,
     pub(crate) requested_models: Arc<Mutex<Vec<String>>>,
     pub(crate) explicit_model_interests: Arc<Mutex<Vec<String>>>,
@@ -830,6 +845,7 @@ impl Node {
             model_runtime_descriptors: Arc::new(Mutex::new(Vec::new())),
             hosted_models: Arc::new(Mutex::new(Vec::new())),
             llama_ready: Arc::new(Mutex::new(false)),
+            split_coordinator: Arc::new(Mutex::new(None)),
             available_models: Arc::new(Mutex::new(Vec::new())),
             requested_models: Arc::new(Mutex::new(Vec::new())),
             explicit_model_interests: Arc::new(Mutex::new(Vec::new())),
@@ -1014,6 +1030,7 @@ impl Node {
             model_runtime_descriptors: Arc::new(Mutex::new(Vec::new())),
             hosted_models: Arc::new(Mutex::new(Vec::new())),
             llama_ready: Arc::new(Mutex::new(false)),
+            split_coordinator: Arc::new(Mutex::new(None)),
             available_models: Arc::new(Mutex::new(Vec::new())),
             requested_models: Arc::new(Mutex::new(Vec::new())),
             explicit_model_interests: Arc::new(Mutex::new(Vec::new())),
@@ -1252,6 +1269,30 @@ impl Node {
 
     pub async fn role(&self) -> NodeRole {
         self.role.lock().await.clone()
+    }
+
+    /// Record the split coordinator this node just elected.
+    ///
+    /// The same id keeps its original timestamp. A different id replaces the
+    /// observation, which is what a later election has to do.
+    pub(crate) async fn note_split_coordinator(&self, node_id: EndpointId) {
+        let observation = SplitCoordinatorObservation {
+            node_id: node_id.to_string(),
+            short_node_id: node_id.fmt_short().to_string(),
+            elected_at_unix_ms: super::current_time_unix_ms(),
+        };
+        let mut guard = self.split_coordinator.lock().await;
+        if guard
+            .as_ref()
+            .is_some_and(|current| current.node_id == observation.node_id)
+        {
+            return;
+        }
+        *guard = Some(observation);
+    }
+
+    pub(crate) async fn split_coordinator(&self) -> Option<SplitCoordinatorObservation> {
+        self.split_coordinator.lock().await.clone()
     }
 
     #[cfg(test)]

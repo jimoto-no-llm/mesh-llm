@@ -709,6 +709,8 @@ impl Node {
             .lock()
             .await
             .activate_topology(topology);
+        let statuses = self.stage_runtime_statuses().await;
+        super::publish_observed_stages(&statuses);
     }
 
     pub async fn withdraw_stage_topology(&self, topology_id: &str, run_id: &str) -> bool {
