@@ -4,13 +4,19 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "mesh" / "scripts" / "build-ui.sh"
+HOST_SCRIPT = ROOT / "mesh" / "scripts" / "build-host.sh"
+PACKAGE_SCRIPT = ROOT / "mesh" / "scripts" / "package-sdk-console-assets.sh"
+ENSURE_SCCACHE_LIB = ROOT / "scripts" / "lib" / "ensure-sccache.sh"
 UI_DIR = ROOT / "mesh" / "crates" / "mesh-llm-ui"
 WORKFLOWS = ROOT / ".github" / "workflows"
 
@@ -170,6 +176,10 @@ class BuildUiScriptTests(unittest.TestCase):
             self.assertIn("pnpm", missing.stderr)
             self.assertIn("corepack", missing.stderr)
             self.assertIn("MESH_LLM_SKIP_UI=1", missing.stderr)
+            self.assertIn("just build", missing.stderr)
+            self.assertIn("just mesh", missing.stderr)
+            self.assertIn("build-host.sh", missing.stderr)
+            self.assertIn("--skip-build", missing.stderr)
             for name in ("node", "pnpm"):
                 stub = Path(directory) / name
                 stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -182,6 +192,111 @@ class BuildUiScriptTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(present.returncode, 0, present.stderr)
+
+    def test_skip_env_is_honored_only_through_the_host_wrapper(self) -> None:
+        """The guided skip works via `just build` / `just mesh` only.
+
+        `build-host.sh` reads `MESH_LLM_SKIP_UI`; direct `build-ui.sh` calls
+        ignore it and `package-sdk-console-assets.sh` uses `--skip-build`, so
+        the guidance must name the supported entry points.
+        """
+        host = HOST_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("MESH_LLM_SKIP_UI", host)
+        ui = SCRIPT.read_text(encoding="utf-8")
+        self.assertNotIn("MESH_LLM_SKIP_UI", ui)
+        package = PACKAGE_SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("--skip-build", package)
+        self.assertNotIn("MESH_LLM_SKIP_UI", package)
+
+    def test_guided_skip_env_skips_the_host_ui_step_without_toolchain(self) -> None:
+        """Running the guided `export MESH_LLM_SKIP_UI=1` via build-host.sh
+        skips the UI without needing node or pnpm."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            scripts_dir = tmp / "scripts"
+            mesh_scripts_dir = tmp / "mesh" / "scripts"
+            bin_dir = tmp / "bin"
+            mesh_scripts_dir.mkdir(parents=True)
+            scripts_dir.mkdir(exist_ok=True)
+            bin_dir.mkdir(exist_ok=True)
+            lib_dir = scripts_dir / "lib"
+            lib_dir.mkdir(exist_ok=True)
+            shutil.copy(ENSURE_SCCACHE_LIB, lib_dir / "ensure-sccache.sh")
+            for name in ("macos-deployment-target.sh", "macos-deployment-target.txt"):
+                shutil.copy(ROOT / "scripts" / "lib" / name, lib_dir / name)
+            copied_host = mesh_scripts_dir / "build-host.sh"
+            shutil.copy(HOST_SCRIPT, copied_host)
+            copied_host.chmod(copied_host.stat().st_mode | stat.S_IXUSR)
+            marker = tmp / "ui-called"
+            self.write_executable(
+                scripts_dir / "build-ui.sh",
+                textwrap.dedent(
+                    f"""\
+                    #!/usr/bin/env bash
+                    set -euo pipefail
+                    touch "{marker}"
+                    echo "stub build-ui should have been skipped" >&2
+                    exit 2
+                    """
+                ),
+            )
+            self.write_executable(bin_dir / "sccache", "#!/bin/sh\nexit 0\n")
+            self.write_executable(bin_dir / "cargo", "#!/usr/bin/env bash\nset -euo pipefail\nexit 0\n")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "MESH_LLM_SKIP_UI": "1",
+                    "MESH_LLM_BUILD_VERSION": "0.0.0-test",
+                    "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}",
+                }
+            )
+            result = subprocess.run(
+                [str(copied_host), "--profile", "debug"],
+                cwd=tmp,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Skipping mesh-llm UI build because MESH_LLM_SKIP_UI=1.", result.stdout)
+            self.assertFalse(marker.exists(), "build-ui.sh must not run when the guided skip is set")
+
+    def test_direct_ui_build_ignores_the_guided_skip_env(self) -> None:
+        """Direct `build-ui.sh` with `MESH_LLM_SKIP_UI=1` still demands the toolchain."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ui_dir = Path(tmpdir) / "ui"
+            ui_dir.mkdir()
+            for relative in (
+                "package.json",
+                "pnpm-lock.yaml",
+                "vite.config.ts",
+                "tsconfig.json",
+                "tsconfig.app.json",
+                "tsconfig.node.json",
+                "biome.json",
+                "index.html",
+            ):
+                (ui_dir / relative).write_text("{}\n", encoding="utf-8")
+            (ui_dir / "src").mkdir()
+            (ui_dir / "public").mkdir()
+            env = os.environ.copy()
+            env["MESH_LLM_SKIP_UI"] = "1"
+            self.assertIsNone(
+                shutil.which("pnpm", path=env.get("PATH", "")),
+                "direct UI test requires pnpm to be absent from PATH",
+            )
+            result = subprocess.run(
+                ["/bin/bash", str(SCRIPT), str(ui_dir)],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("MESH_LLM_SKIP_UI=1", result.stderr)
+            self.assertIn("just build", result.stderr)
 
     def test_mixed_case_release_profile_uses_release_ui_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -205,6 +320,10 @@ class BuildUiScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("profile: release", result.stdout)
         self.assertIn("debug UI: false", result.stdout)
+
+    def write_executable(self, path: Path, content: str) -> None:
+        path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
     def _write_up_to_date_ui_fixture(self, ui_dir: Path, *, profile: str, debug_ui: str) -> None:
         ui_dir.mkdir()

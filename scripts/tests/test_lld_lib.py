@@ -178,6 +178,24 @@ class CallSiteTests(unittest.TestCase):
             self.assertEqual(cached.returncode, 0, cached.stderr)
             self.assertIn("RAN", cached.stdout)
 
+    def test_the_windows_with_lld_recipe_honors_the_documented_wrapper_bypass(self) -> None:
+        """Windows must also skip the sccache demand when RUSTC_WRAPPER is set.
+
+        `Test-Path Env:RUSTC_WRAPPER` detects the documented empty bypass
+        (`$env:RUSTC_WRAPPER=""`), mirroring the Unix `${RUSTC_WRAPPER+set}`
+        guard and `ensure_sccache`; otherwise the guided bypass would still
+        fail through `with-lld` recipes such as `ci-crate-lists`."""
+        source = read_justfile_source(JUSTFILE)
+        start = source.index("[windows]\nwith-lld *COMMAND:")
+        end = source.index("# Build both local products", start)
+        recipe = source[start:end]
+        self.assertIn("Test-Path Env:RUSTC_WRAPPER", recipe)
+        self.assertIn("Get-Command sccache", recipe)
+        self.assertIn("$env:RUSTC_WRAPPER", recipe)
+        guard = recipe.index("Test-Path Env:RUSTC_WRAPPER")
+        demand = recipe.index("Get-Command sccache")
+        self.assertLess(guard, demand)
+
     def test_macos_setup_provisions_both_required_accelerators(self) -> None:
         action = MACOS_SETUP.read_text(encoding="utf-8")
         self.assertIn("brew install lld", action)

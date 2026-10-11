@@ -37,7 +37,7 @@ with-lld *COMMAND:
 [private]
 [windows]
 with-lld *COMMAND:
-    @powershell -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { throw 'sccache is required by .cargo/config.toml but was not found on PATH. Install it with: just bootstrap-build-tools. Or build without the compiler cache for this session with: $env:RUSTC_WRAPPER=\"\"' }; Invoke-Expression '{{ COMMAND }}'"
+    @powershell -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; if (-not (Test-Path Env:RUSTC_WRAPPER)) { if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { throw 'sccache is required by .cargo/config.toml but was not found on PATH. Install it with: just bootstrap-build-tools. Or build without the compiler cache for this session with: $env:RUSTC_WRAPPER=\"\"' } }; Invoke-Expression '{{ COMMAND }}'"
 
 
 # Build both local products for the current platform: Skippy, then MeshLLM.
