@@ -1091,34 +1091,9 @@ impl DashboardState {
         true
     }
 
-    fn note_split_assignment(state: &mut DashboardState, message: &str) {
-        if let Some(rest) = message.strip_prefix("Split runtime coordinator is ") {
-            let id = rest.split(';').next().unwrap_or(rest).trim();
-            if id.is_empty() {
-                return;
-            }
-            // The standby loop repeats this sentence. Keep a stage list that
-            // already names this coordinator. A different id replaces it.
-            if state
-                .split_assignment
-                .as_ref()
-                .is_some_and(|summary| summary.contains(id))
-            {
-                return;
-            }
-            state.split_assignment = Some(format!("coordinator {id}"));
-            return;
-        }
-        if let Some(rest) = message.strip_prefix("Split stages ") {
-            let summary = rest.trim();
-            if !summary.is_empty() {
-                state.split_assignment = Some(summary.to_string());
-            }
-        }
-    }
-
     pub(super) fn apply_output_event(&mut self, event: &OutputEvent) {
         self.record_startup_history_event(event);
+        self.note_split_assignment(event);
 
         if self.shutdown_in_progress && is_shutdown_suppressed_ready_event(event) {
             return;
@@ -1129,7 +1104,6 @@ impl DashboardState {
                 self.version = Some(version.clone());
                 self.runtime_ready = false;
                 self.launch_plan = None;
-                self.split_assignment = None;
                 self.ready_llama_process_rows.clear();
             }
             OutputEvent::LaunchPlan { plan } => {
@@ -1198,8 +1172,8 @@ impl DashboardState {
             OutputEvent::PeerLeft { peer_id, .. } => {
                 self.peer_ids.remove(peer_id);
             }
-            OutputEvent::Info { message, .. } => Self::note_split_assignment(self, message),
-            OutputEvent::Warning { .. }
+            OutputEvent::Info { .. }
+            | OutputEvent::Warning { .. }
             | OutputEvent::RpcServerStarting { .. }
             | OutputEvent::RpcReady { .. }
             | OutputEvent::RpcStartupFailed { .. }
