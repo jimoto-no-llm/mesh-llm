@@ -1032,8 +1032,9 @@ fn warn_pipeline_fallback(strong_name: &str) {
 
 /// Route a request whose model is not being served from local candidates
 /// (either genuinely absent locally, or forced away from local by
-/// `x-mesh-target`/`x-mesh-exclude` -- see `route_request`), trying remote
-/// mesh peers, then local-unavailable/plugin fallbacks, then 404.
+/// `x-mesh-target`/`x-mesh-exclude` -- see `route_request`), trying this
+/// node's image endpoint, remote mesh peers, then local-unavailable/plugin
+/// fallbacks, then 404.
 #[allow(clippy::too_many_arguments)]
 async fn route_missing_local_model(
     tcp_stream: ClientStream,
@@ -1045,6 +1046,20 @@ async fn route_missing_local_model(
     required_tokens: Option<u32>,
     route_observer: OpenAiRouteObserver<'_>,
 ) -> proxy::RouteDispatchOutcome {
+    let tcp_stream = match super::image_generation::route_to_local_image_endpoint(
+        ctx.node,
+        tcp_stream,
+        request,
+        model_name,
+        target,
+        excluded,
+        route_observer,
+    )
+    .await
+    {
+        Ok(outcome) => return outcome,
+        Err(tcp_stream) => tcp_stream,
+    };
     // An explicit self-target can never be found by `resolve_remote_mesh_route`
     // below -- it only searches OTHER peers' advertised hosts -- so it always
     // failed closed with a spurious 409 even when this node serves the model

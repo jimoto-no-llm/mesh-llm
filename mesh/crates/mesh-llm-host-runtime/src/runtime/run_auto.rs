@@ -1753,6 +1753,7 @@ async fn run_auto_inner(
         auto_join_candidates,
         mut embedded_control_rx,
     } = ctx;
+    let image_endpoints = crate::inference::image_endpoint::image_endpoints_from_options(&options)?;
     // Do not create the mesh node or detached role watchers until a slow
     // termination-signal observer has either registered every required stream
     // or reported a terminal registration failure.
@@ -1836,6 +1837,11 @@ async fn run_auto_inner(
         tunnel_mgr.set_http_port(api_port);
         tunnel_mgr.set_http_ingress(target_rx.clone(), affinity_router.clone());
         plugin_host_role::spawn(node.clone(), plugin_manager.clone(), api_port);
+        crate::inference::image_endpoint::spawn_image_endpoint_watch(
+            node.clone(),
+            image_endpoints,
+            api_port,
+        );
     }
 
     // Runtime control for local load/unload of extra models.

@@ -79,6 +79,9 @@ pub enum ModelWorkloadClass {
     /// Typed System One decisions (`POST /systemone`) with no text generation,
     /// such as a Laya encoder + decision head.
     Decision,
+    /// Text-to-image generation (`POST /v1/images/generations`) that returns
+    /// encoded images instead of tokens.
+    ImageGeneration,
     /// Explicit metadata from a newer peer that this node cannot interpret.
     /// Unlike absent legacy metadata, this never authorizes inference.
     #[serde(other)]

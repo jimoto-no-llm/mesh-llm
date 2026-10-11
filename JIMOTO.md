@@ -51,6 +51,34 @@ just build
 
 上流の ROADMAP では iOS（Swift＋XCFramework）が先で、Android が後続です。`mesh/sdk/swift` に XCFramework ビルド手順があり、組込みクライアント（iOS・macOS・Android）は正式にサポート対象です。このフォークで iOS アプリを出す段階になったら、ここに手順を足します。それまではブラウザ経由の利用が確実です。
 
+## 画像生成（実験的）
+
+手元で稼働している OpenAI 互換の画像生成サーバーを、メッシュの画像生成モデルとして共有できます。共有したモデルは、メッシュ内のどのノードからでも `POST /v1/images/generations` で利用可能です。生成はサーバーを動かしているノードでのみ行われ、複数ノードへの分散処理には未対応です。
+
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) の `sd-server` を使用する例です。
+
+```bash
+# 1. 画像生成サーバーを起動する（モデルの指定方法は sd-server の README を参照）
+sd-server <モデルの指定> --listen-ip 127.0.0.1 --listen-port 1234
+
+# 2. メッシュに sd-turbo という名前で共有する
+./target/debug/mesh-llm serve --image-endpoint sd-turbo=http://127.0.0.1:1234/v1
+
+# 3. メッシュ内の任意のノードから呼び出す
+curl -s http://localhost:9337/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"sd-turbo","prompt":"a lighthouse at dusk","size":"512x512"}'
+```
+
+- `名前=URL` の名前は、メッシュに広告するモデル名です。リクエストの `model` と照合されるため、サーバーごとに別の名前を付けてください。`--image-endpoint` は複数回指定できます。
+- サーバーのモデル一覧（`/v1/models`）が応答している間のみモデルを広告し、2回連続で応答がなければ取り下げます。mesh-llm 自体はサーバーの起動・停止やモデルの読み込みを行いません。
+- `/v1/models` では、共有したモデルの `metadata.workload_class` が `image_generation` になります。
+- 画像は `data[].b64_json` で返却されます。URL はサーバーのあるノード内部を指し、他のノードからは参照できないため、`response_format: "url"` は使用できません。`n` は 1〜10 を指定できます。
+- メッシュが最初の応答を待つ時間は最大5分です。`sd-server` は生成が完了してから応答するため、1回の生成に5分以上かかる設定ではエラーになります。
+- URL は `http://` のみ対応しています。認証のないサーバーは、ループバックまたは信頼できるネットワーク内でのみ稼働させてください。
+- `--image-endpoint` は `mesh-llm serve` 専用であり、クライアント（`mesh-llm client`）では使用できません。
+- 画像の編集（`/v1/images/edits`）と、mesh-llm 自身がモデルを読み込んで生成する方式（Skippy での実行）は、今後対応予定です。
+
 ## リリースについて
 
 ### 現状
