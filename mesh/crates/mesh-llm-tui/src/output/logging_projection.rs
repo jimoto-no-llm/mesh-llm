@@ -20,6 +20,9 @@ pub(super) fn projected_message(event: &OutputEvent) -> String {
         | OutputEvent::Warning { message, .. }
         | OutputEvent::Error { message, .. }
         | OutputEvent::Fatal { message, .. } => sanitize_text(message),
+        OutputEvent::SplitCoordinator { .. } | OutputEvent::SplitStages { .. } => {
+            sanitize_text(&event.message())
+        }
         _ => event.message(),
     }
 }
@@ -43,6 +46,9 @@ pub(super) fn projected_pretty_text(event: &OutputEvent) -> String {
         | OutputEvent::Warning { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::Fatal { .. } => sanitize_text(&event.pretty_text()),
+        OutputEvent::SplitCoordinator { .. } | OutputEvent::SplitStages { .. } => {
+            sanitize_text(&event.pretty_text())
+        }
         _ => event.pretty_text(),
     }
 }
@@ -78,6 +84,27 @@ pub(super) fn projected_json_fields(event: &OutputEvent) -> Map<String, Value> {
         | OutputEvent::Warning { .. }
         | OutputEvent::Error { .. }
         | OutputEvent::Fatal { .. } => sanitize_map(event.json_fields()),
+        OutputEvent::SplitCoordinator { node_id, model } => {
+            let mut fields = Map::new();
+            fields.insert("node_id".to_string(), Value::String(node_id.clone()));
+            fields.insert("model".to_string(), Value::String(sanitize_text(model)));
+            fields
+        }
+        OutputEvent::SplitStages {
+            coordinator_id,
+            summary,
+        } => {
+            let mut fields = Map::new();
+            fields.insert(
+                "coordinator_id".to_string(),
+                coordinator_id
+                    .clone()
+                    .map(Value::String)
+                    .unwrap_or(Value::Null),
+            );
+            fields.insert("summary".to_string(), Value::String(sanitize_text(summary)));
+            fields
+        }
         _ => event.json_fields(),
     }
 }
