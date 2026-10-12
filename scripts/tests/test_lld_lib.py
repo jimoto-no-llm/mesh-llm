@@ -181,17 +181,20 @@ class CallSiteTests(unittest.TestCase):
     def test_the_windows_with_lld_recipe_honors_the_documented_wrapper_bypass(self) -> None:
         """Windows must also skip the sccache demand when RUSTC_WRAPPER is set.
 
-        `Test-Path Env:RUSTC_WRAPPER` detects the documented empty bypass
-        (`$env:RUSTC_WRAPPER=""`), mirroring the Unix `${RUSTC_WRAPPER+set}`
+        `Test-Path Env:RUSTC_WRAPPER` mirrors the Unix `${RUSTC_WRAPPER+set}`
         guard and `ensure_sccache`; otherwise the guided bypass would still
-        fail through `with-lld` recipes such as `ci-crate-lists`."""
+        fail through `with-lld` recipes such as `ci-crate-lists`. The guidance
+        stays bootstrap-only: `$env:RUSTC_WRAPPER=""` is no bypass on
+        PowerShell 5.1, and a bare `$env:` would be eaten by sh expansion."""
         source = read_justfile_source(JUSTFILE)
         start = source.index("[windows]\nwith-lld *COMMAND:")
         end = source.index("# Build both local products", start)
         recipe = source[start:end]
         self.assertIn("Test-Path Env:RUSTC_WRAPPER", recipe)
         self.assertIn("Get-Command sccache", recipe)
-        self.assertIn("$env:RUSTC_WRAPPER", recipe)
+        self.assertIn("just bootstrap-build-tools", recipe)
+        self.assertNotIn("$env:RUSTC_WRAPPER", recipe)
+        self.assertNotIn("$env:", recipe)
         guard = recipe.index("Test-Path Env:RUSTC_WRAPPER")
         demand = recipe.index("Get-Command sccache")
         self.assertLess(guard, demand)
