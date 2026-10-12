@@ -26,7 +26,7 @@ Open `http://localhost:3131` in your browser for the web console; the API is at 
 
 ## Supported Environments
 
-- Linux (x86_64), macOS, and Windows are the primary environments. CI also runs per-OS lanes.
+- Linux (x86_64), macOS, and Windows are the primary environments.
 - CONTRIBUTING and `install.sh` / `install.ps1` are the reference procedures for each environment.
 - Records of successful runs following the procedures are collected in Issue #52.
 
