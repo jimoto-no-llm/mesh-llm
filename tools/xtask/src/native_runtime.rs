@@ -19,7 +19,11 @@ pub(crate) fn select_native_runtime_command(args: &[String]) -> DynResult<()> {
         &parsed.cuda_major,
     )
     .map_err(|message| format!("native-runtime select: {message}"))?;
-    println!("{}", selected.display());
+    if parsed.json {
+        println!("{}", serde_json::json!({ "path": selected }));
+    } else {
+        println!("{}", selected.display());
+    }
     Ok(())
 }
 
@@ -29,6 +33,7 @@ struct SelectArgs {
     arch: String,
     backend: String,
     cuda_major: String,
+    json: bool,
 }
 
 fn parse_select_args(args: &[String]) -> DynResult<SelectArgs> {
@@ -37,6 +42,7 @@ fn parse_select_args(args: &[String]) -> DynResult<SelectArgs> {
     let mut arch = None;
     let mut backend = None;
     let mut cuda_major = String::new();
+    let mut json = false;
     let mut index = 0;
     while index < args.len() {
         let arg = &args[index];
@@ -51,6 +57,7 @@ fn parse_select_args(args: &[String]) -> DynResult<SelectArgs> {
             "--arch" => arch = Some(take_value(args, &mut index, flag, inline)?),
             "--backend" => backend = Some(take_value(args, &mut index, flag, inline)?),
             "--cuda-major" => cuda_major = take_value(args, &mut index, flag, inline)?,
+            "--json" => json = true,
             other => {
                 return Err(format!("native-runtime select: unknown flag {other}").into());
             }
@@ -62,6 +69,7 @@ fn parse_select_args(args: &[String]) -> DynResult<SelectArgs> {
         arch: require("--arch", arch)?,
         backend: require("--backend", backend)?,
         cuda_major,
+        json,
     })
 }
 
@@ -273,6 +281,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_json_flag() {
+        assert!(parse_select_args(&["--json".to_string()]).is_err());
+        let full = vec![
+            "--root".to_string(),
+            "/tmp/r".to_string(),
+            "--os".to_string(),
+            "linux".to_string(),
+            "--arch".to_string(),
+            "x86_64".to_string(),
+            "--backend".to_string(),
+            "cpu".to_string(),
+            "--json".to_string(),
+        ];
+        let parsed = parse_select_args(&full).expect("parse");
+        assert!(parsed.json);
+    }
+
+    #[test]
     fn parses_space_and_equals_flags() {
         let args = vec![
             "--root".to_string(),
@@ -287,6 +313,7 @@ mod tests {
         assert_eq!(parsed.root, PathBuf::from("/tmp/r"));
         assert_eq!(parsed.os_name, "linux");
         assert_eq!(parsed.cuda_major, "");
+        assert!(!parsed.json);
         assert!(parse_select_args(&["--root".to_string()]).is_err());
         assert!(parse_select_args(&["--bogus".to_string()]).is_err());
     }
