@@ -830,7 +830,8 @@ async fn auto_route_pool_for_ready_models<'a>(
     auto_route::pool_for_ready_models(available, &ready_models)
 }
 
-/// Check workload-aware ingress readiness, including remote and local-startup fallbacks.
+/// Check workload-aware ingress readiness, including this node's image
+/// endpoints and remote and local-startup fallbacks.
 async fn auto_route_model_has_ready_ingress_target(
     node: &mesh::Node,
     targets: &election::ModelTargets,
@@ -839,6 +840,11 @@ async fn auto_route_model_has_ready_ingress_target(
     request_path: &str,
     affinity: &affinity::AffinityRouter,
 ) -> bool {
+    // Ahead of the peer checks because `route_missing_local_model` offers the
+    // request to this node's image endpoint before any peer.
+    if super::image_generation::local_endpoint_serves(node, model, request_path) {
+        return true;
+    }
     let local_candidates =
         workload_routing::ingress_candidates(node, model, request_path, targets).await;
     if contains_routable_candidate(&local_candidates) {

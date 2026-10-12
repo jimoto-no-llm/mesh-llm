@@ -47,6 +47,14 @@ impl ImageRouteScope<'_> {
     }
 }
 
+/// Whether this node's own image endpoint serves `model` for a request to
+/// `path`. The endpoint is not in the native target table, so automatic
+/// routing asks here to count it as ready.
+pub(super) fn local_endpoint_serves(node: &mesh::Node, model: &str, path: &str) -> bool {
+    request_workload_class(path) == Some(ModelWorkloadClass::ImageGeneration)
+        && node.image_endpoint_url(model).is_some()
+}
+
 /// Serve `model` from this node's image endpoint when it advertises one and
 /// the routing scope allows this node. The stream comes back when this node
 /// does not serve the model, or when its server failed before answering and a

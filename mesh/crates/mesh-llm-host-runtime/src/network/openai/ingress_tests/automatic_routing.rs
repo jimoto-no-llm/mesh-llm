@@ -5,14 +5,17 @@
 //! convenes a committee or is served by one capability-selected model.
 
 use crate::inference::election;
+use crate::inference::image_endpoint::ImageEndpoint;
 use crate::mesh;
 use crate::network::affinity;
 use crate::network::openai::automatic;
 use crate::network::openai::transport as proxy;
+use crate::network::openai::workload_routing;
 use mesh_llm_events::logging::identifiers::RequestId;
 
 use super::super::ingress::{
-    AutoRouteResolution, prepare_cache_routing_body, resolve_auto_routed_model,
+    AutoRouteResolution, auto_route_pool_for_ready_models, collect_available_models_for_auto_route,
+    prepare_cache_routing_body, resolve_auto_routed_model,
 };
 
 #[tokio::test]
@@ -40,6 +43,55 @@ async fn auto_readiness_uses_remote_embedding_despite_local_causal_copy() {
             None,
             "/v1/embeddings",
             &affinity::AffinityRouter::new()
+        )
+        .await
+    );
+}
+
+#[tokio::test]
+/// A local image endpoint must stay in the ready pool when a peer serves another image model.
+async fn auto_ready_pool_keeps_local_image_endpoint_beside_remote_image_model() {
+    let (local_model, remote_model) = ("local-image-model", "remote-image-model");
+    let path = "/v1/images/generations";
+    let node = mesh::Node::new_for_tests(crate::mesh::NodeRole::Worker)
+        .await
+        .expect("test node");
+    node.advertise_image_endpoint(
+        &ImageEndpoint::parse(local_model, "http://127.0.0.1:9/v1").expect("image endpoint"),
+        9337,
+    )
+    .await;
+    let peer_id = iroh::SecretKey::generate().public();
+    let mut peer = peer_serving(peer_id, remote_model, false);
+    peer.served_model_descriptors = vec![workload_descriptor(
+        remote_model,
+        mesh::ModelWorkloadClass::ImageGeneration,
+    )];
+    node.insert_test_peer(peer).await;
+    // An image-only node has no native targets.
+    let targets = election::ModelTargets::default();
+    let affinity = affinity::AffinityRouter::new();
+    let models = collect_available_models_for_auto_route(&node, &targets, None).await;
+    let descriptors = node.all_served_model_descriptors().await;
+    let available = workload_routing::routing_candidates(&node, &models, path, &descriptors);
+
+    let pool =
+        auto_route_pool_for_ready_models(&node, &targets, None, path, &available, &affinity).await;
+
+    let ready = pool
+        .iter()
+        .map(|candidate| candidate.name)
+        .collect::<Vec<_>>();
+    assert_eq!(ready, [local_model, remote_model]);
+    // Only image generation requests reach the endpoint, so no other workload counts it.
+    assert!(
+        !super::super::ingress::auto_route_model_has_ready_ingress_target(
+            &node,
+            &targets,
+            local_model,
+            None,
+            "/v1/chat/completions",
+            &affinity,
         )
         .await
     );
