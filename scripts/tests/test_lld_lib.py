@@ -195,6 +195,8 @@ class CallSiteTests(unittest.TestCase):
         self.assertIn("just bootstrap-build-tools", recipe)
         self.assertNotIn("$env:RUSTC_WRAPPER", recipe)
         self.assertNotIn("$env:", recipe)
+        self.assertNotIn("$$", recipe)
+        self.assertIn("\\$ErrorActionPreference", recipe)
         guard = recipe.index("Test-Path Env:RUSTC_WRAPPER")
         demand = recipe.index("Get-Command sccache")
         self.assertLess(guard, demand)
