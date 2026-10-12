@@ -81,6 +81,21 @@ class UiDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symbolic"):
             UI.stamp(self.dist, SOURCE, TAG)
 
+    def test_trailing_slash_symlink_root_is_rejected(self):
+        link = Path(self.temp.name) / "link-dist"
+        link.symlink_to(self.dist, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "real directory"):
+            UI.stamp(Path(str(link) + "/"), SOURCE, TAG)
+
+    def test_unknown_manifest_fields_are_rejected(self):
+        UI.stamp(self.dist, SOURCE, TAG)
+        manifest_path = self.dist / UI.MANIFEST
+        manifest = json.loads(manifest_path.read_text())
+        manifest["unknown_field"] = "surprise"
+        manifest_path.write_text(json.dumps(manifest))
+        with self.assertRaises(ValueError):
+            UI.verify(self.dist, SOURCE, TAG)
+
     def test_identity_shape_is_checked(self):
         for source, tag in (("main", TAG), (SOURCE, "main")):
             with self.subTest(source=source, tag=tag), self.assertRaises(ValueError):

@@ -43,6 +43,7 @@ pub(crate) fn ui_distribution_verify_command(args: &[String]) -> DynResult<()> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Manifest {
     schema: u32,
     source_sha: String,
@@ -112,7 +113,7 @@ fn describe(root: &Path, source_sha: &str, release_tag: &str) -> Result<Manifest
     if !is_release_tag(release_tag) {
         return Err("release tag must be a versioned v-prefixed tag".to_string());
     }
-    if !root.is_dir() || root.is_symlink() {
+    if !root.is_dir() || is_symlink_itself(root) {
         return Err("UI distribution must be a real directory".to_string());
     }
     let mut files = BTreeMap::new();
@@ -139,6 +140,14 @@ fn describe(root: &Path, source_sha: &str, release_tag: &str) -> Result<Manifest
         release_tag: release_tag.to_string(),
         files,
     })
+}
+
+/// Whether `path` itself is a symbolic link. A trailing slash forces the
+/// OS to resolve the link first, so strip it via components before asking.
+fn is_symlink_itself(path: &Path) -> bool {
+    fs::symlink_metadata(path.components().as_path())
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
 }
 
 fn is_source_sha(value: &str) -> bool {
@@ -453,6 +462,46 @@ mod tests {
             .expect("symlink");
         let error = describe(&dist, SOURCE, TAG).expect_err("must fail");
         assert!(error.contains("symbolic"), "unexpected: {error}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn trailing_slash_symlink_root_is_rejected() {
+        let dist = fixture_dist();
+        let parent = dist.parent().expect("parent").to_path_buf();
+        let _ = fs::remove_file(parent.join("link-dist"));
+        std::os::unix::fs::symlink(&dist, parent.join("link-dist")).expect("symlink");
+        let slashed = parent.join("link-dist/");
+        let error = describe(&slashed, SOURCE, TAG).expect_err("must fail");
+        assert!(error.contains("real directory"), "unexpected: {error}");
+    }
+
+    #[test]
+    fn unknown_manifest_fields_are_rejected() {
+        let dist = fixture_dist();
+        let args = [
+            "--dist".to_string(),
+            dist.to_string_lossy().into_owned(),
+            "--source-sha".to_string(),
+            SOURCE.to_string(),
+            "--release-tag".to_string(),
+            TAG.to_string(),
+        ];
+        ui_distribution_stamp_command(&args).expect("stamp");
+        let manifest_path = dist.join(MANIFEST);
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("read")).expect("json");
+        value["unknown_field"] = serde_json::Value::from("surprise");
+        fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&value).expect("render"),
+        )
+        .expect("rewrite");
+        let error = ui_distribution_verify_command(&args).expect_err("must fail");
+        assert!(
+            error.to_string().contains("checksums") || error.to_string().contains("unknown"),
+            "unexpected: {error}"
+        );
     }
 
     #[test]
