@@ -359,9 +359,7 @@ async fn queue_translated_reasoning_delta(
             return reject_translated_stream_over_limit(
                 tcp_stream,
                 capture,
-                format!(
-                    "buffered reasoning deltas exceed {MAX_BUFFERED_REASONING_BYTES} bytes"
-                ),
+                format!("buffered reasoning deltas exceed {MAX_BUFFERED_REASONING_BYTES} bytes"),
             )
             .await;
         }

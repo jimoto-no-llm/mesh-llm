@@ -22,8 +22,7 @@ use super::{
     responses_stream_created_event_with_sequence, usage_to_responses_usage,
 };
 use crate::{
-    InferenceError, InferenceResult, chat::ChatCompletionChunk,
-    stream_lifecycle::StreamLifecycle,
+    InferenceError, InferenceResult, chat::ChatCompletionChunk, stream_lifecycle::StreamLifecycle,
 };
 
 /// One output item's slot in the response's `output` array.
@@ -312,9 +311,7 @@ fn fold_tool_call_delta(
             reject_over_limit(
                 state,
                 out,
-                format!(
-                    "too many streamed tool calls (limit {MAX_STREAMED_TOOL_CALLS})"
-                ),
+                format!("too many streamed tool calls (limit {MAX_STREAMED_TOOL_CALLS})"),
             );
             return;
         }
@@ -342,8 +339,7 @@ fn fold_tool_call_delta(
         // the byte budget below caps both accumulations at once.
         let over_bytes =
             entry.arguments.len() + arguments.len() > MAX_STREAMED_TOOL_ARGUMENTS_BYTES;
-        let over_pending =
-            entry.pending_argument_deltas.len() >= MAX_PENDING_ARGUMENT_DELTAS;
+        let over_pending = entry.pending_argument_deltas.len() >= MAX_PENDING_ARGUMENT_DELTAS;
         if over_bytes || over_pending {
             let message = if over_bytes {
                 format!(
@@ -371,7 +367,11 @@ fn fold_tool_call_delta(
 /// already exist on this path.
 fn reject_over_limit(state: &mut ResponseSseState, out: &mut Vec<Event>, message: String) {
     state.failed = true;
-    push_event(out, "error", InferenceError::invalid_request(message).body());
+    push_event(
+        out,
+        "error",
+        InferenceError::invalid_request(message).body(),
+    );
 }
 
 /// Replay argument fragments after the item is announced. If an upstream
