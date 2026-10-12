@@ -17,7 +17,7 @@ cd mesh-llm
 
 ### ビルド
 
-1. 必要なものを用意します。`just`・`cmake`・Rust・`sccache`・高速リンカ（`mold`と`lld`）・Node.js 24です。
+1. 必要なものを用意します。`just`・`cmake`・Rust・`sccache`・高速リンカ（`mold`と`lld`）・Node.js 24・`pnpm 10`です。
 2. 初回だけ導入用レシピを実行します。
 ```bash
 just bootstrap-build-tools
@@ -71,7 +71,7 @@ export RUSTC_WRAPPER=""
 
 ### ビルド
 
-1. 必要なものを用意します。`just`・`cmake`・Rust・`sccache`・lld・Node.js 24です。Apple Siliconを使います。Metalは自動です。
+1. 必要なものを用意します。`just`・`cmake`・Rust・`sccache`・lld・Node.js 24・`pnpm 10`です。Apple Siliconを使います。Metalは自動です。
 2. 初回だけ次を実行します。
 ```bash
 just bootstrap-build-tools
@@ -126,7 +126,7 @@ export RUSTC_WRAPPER=""
 
 ### ビルド
 
-1. PowerShellを使います。必要なものは`just`・`cmake`・Rust（MSVC・C++ワークロード付きBuild Tools）・`sccache`・lld系・Node.js 24です。
+1. PowerShellを使います。必要なものは`just`・`cmake`・Rust（MSVC・C++ワークロード付きBuild Tools）・`sccache`・lld系・Node.js 24・`pnpm 10`です。
 2. 初回だけ次を実行します。
 ```powershell
 just bootstrap-build-tools
@@ -135,10 +135,7 @@ just bootstrap-build-tools
 ```powershell
 just build
 ```
-4. sccacheを入れられない環境では、そのシェルで次を設定します。
-```powershell
-$env:RUSTC_WRAPPER = ""
-```
+4. sccacheを入れられない環境では `just bootstrap-build-tools` で導入します（`$env:RUSTC_WRAPPER = ""` はPowerShell 7.4以前では回避策になりません）。
 
 ### 参加（join）
 
@@ -176,7 +173,8 @@ $env:RUSTC_WRAPPER = ""
 curl -fsS http://127.0.0.1:3131/api/status
 curl -fsS http://127.0.0.1:9337/v1/models
 ```
+※`--local-model-only` では `/api/status` が通らないため、`/v1/models` で確認します。
 2. 小さなチャット完了を投げます。使うモデルIDは上の一覧の値に置き換えます。
 ```bash
-curl http://localhost:9337/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"<model-id>","messages":[{"role":"user","content":"hello"}]}}'
+curl http://localhost:9337/v1/chat/completions -H "Content-Type: application/json" -d '{"model":"<model-id>","messages":[{"role":"user","content":"hello"}]}'
 ```
