@@ -59,6 +59,16 @@ class UiDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "JavaScript"):
             UI.stamp(self.dist, SOURCE, TAG)
 
+    def test_json_raw_text_module_tag_is_ignored(self):
+        (self.dist / "index.html").write_text('<script type="application/json"><script type="module" src="/assets/app.js"></script></script>')
+        with self.assertRaisesRegex(ValueError, "JavaScript"):
+            UI.stamp(self.dist, SOURCE, TAG)
+
+    def test_charref_module_src_is_accepted(self):
+        (self.dist / "index.html").write_text('<script type="module" src="/assets/app&#46;js"></script>')
+        UI.stamp(self.dist, SOURCE, TAG)
+        UI.verify(self.dist, SOURCE, TAG)
+
     def test_missing_manifest_and_entry_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "release manifest"):
             UI.verify(self.dist, SOURCE, TAG)

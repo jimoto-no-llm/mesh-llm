@@ -220,130 +220,65 @@ fn posix_relative(relative: &Path) -> String {
 }
 
 fn has_built_module(html: &str, files: &BTreeMap<String, String>) -> bool {
-    for (tag, attrs) in script_tags(&strip_comments(html)) {
-        if tag.eq_ignore_ascii_case("script")
-            && attrs.get("type").map(String::as_str) == Some("module")
-            && let Some(src) = attrs.get("src")
-        {
-            let key = src.strip_prefix('/').unwrap_or(src);
-            if key.ends_with(".js") && files.contains_key(key) {
-                return true;
-            }
+    for src in module_script_sources(html) {
+        let key = src.strip_prefix('/').unwrap_or(&src);
+        if key.ends_with(".js") && files.contains_key(key) {
+            return true;
         }
     }
     false
 }
 
-fn strip_comments(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find("<!--") {
-        out.push_str(&rest[..start]);
-        rest = &rest[start + "<!--".len()..];
-        if let Some(end) = rest.find("-->") {
-            rest = &rest[end + "-->".len()..];
-        } else {
-            rest = "";
+/// Collect src of script type module start tags.
+///
+/// Mirrors Python html.parser.HTMLParser handling in mesh/scripts/ui-distribution.py:
+/// raw-text elements hide inner tags and attribute character references are
+/// decoded by the tokenizer.
+fn module_script_sources(html: &str) -> Vec<String> {
+    let emitter = html5gum::DefaultEmitter::default();
+    let mut tokenizer = html5gum::Tokenizer::new_with_emitter(html, emitter);
+    let mut sources = Vec::new();
+    while let Some(Ok(token)) = tokenizer.next() {
+        if let html5gum::Token::StartTag(tag) = token {
+            let name = String::from_utf8_lossy(&tag.name).to_lowercase();
+            let mut script_type = None;
+            let mut src = None;
+            for (raw_name, raw_value) in &tag.attributes {
+                let attr_name = String::from_utf8_lossy(&raw_name.0).to_lowercase();
+                let attr_value = String::from_utf8_lossy(&raw_value.0).into_owned();
+                if attr_name == "type" {
+                    script_type = Some(attr_value);
+                } else if attr_name == "src" {
+                    src = Some(attr_value);
+                }
+            }
+            if script_type.as_deref() == Some("module")
+                && let Some(src) = src
+            {
+                sources.push(src);
+            }
+            if !tag.self_closing
+                && let Some(state) = raw_text_state(&name)
+            {
+                tokenizer.set_state(state);
+            }
         }
     }
-    out.push_str(rest);
-    out
+    sources
 }
 
-fn script_tags(html: &str) -> Vec<(String, BTreeMap<String, String>)> {
-    let mut tags = Vec::new();
-    let bytes = html.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != b'<' || index + 1 >= bytes.len() {
-            index += 1;
-            continue;
-        }
-        let mut cursor = index + 1;
-        while cursor < bytes.len() && bytes[cursor].is_ascii_alphabetic() {
-            cursor += 1;
-        }
-        if cursor == index + 1 {
-            index += 1;
-            continue;
-        }
-        let tag = html[index + 1..cursor].to_string();
-        let mut attrs = BTreeMap::new();
-        cursor = parse_attributes(html, cursor, &mut attrs);
-        if cursor < bytes.len() && bytes[cursor] == b'>' {
-            tags.push((tag, attrs));
-        }
-        index = cursor + 1;
-    }
-    tags
-}
-
-fn parse_attributes(html: &str, mut cursor: usize, attrs: &mut BTreeMap<String, String>) -> usize {
-    let bytes = html.as_bytes();
-    loop {
-        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-            cursor += 1;
-        }
-        if cursor >= bytes.len() || bytes[cursor] == b'>' {
-            break;
-        }
-        if bytes[cursor] == b'/' {
-            cursor += 1;
-            continue;
-        }
-        let start = cursor;
-        while cursor < bytes.len()
-            && !bytes[cursor].is_ascii_whitespace()
-            && bytes[cursor] != b'='
-            && bytes[cursor] != b'>'
-            && bytes[cursor] != b'/'
-        {
-            cursor += 1;
-        }
-        if cursor == start {
-            cursor += 1;
-            continue;
-        }
-        let name = html[start..cursor].to_ascii_lowercase();
-        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-            cursor += 1;
-        }
-        if cursor >= bytes.len() || bytes[cursor] != b'=' {
-            attrs.insert(name, String::new());
-            continue;
-        }
-        cursor += 1;
-        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-            cursor += 1;
-        }
-        attrs.insert(name, parse_attr_value(html, &mut cursor));
-    }
-    cursor
-}
-
-fn parse_attr_value(html: &str, cursor: &mut usize) -> String {
-    let bytes = html.as_bytes();
-    if *cursor < bytes.len() && (bytes[*cursor] == b'"' || bytes[*cursor] == b'\'') {
-        let quote = bytes[*cursor];
-        *cursor += 1;
-        let start = *cursor;
-        while *cursor < bytes.len() && bytes[*cursor] != quote {
-            *cursor += 1;
-        }
-        let value = html[start..*cursor].to_string();
-        if *cursor < bytes.len() {
-            *cursor += 1;
-        }
-        value
-    } else {
-        let start = *cursor;
-        while *cursor < bytes.len()
-            && !bytes[*cursor].is_ascii_whitespace()
-            && bytes[*cursor] != b'>'
-        {
-            *cursor += 1;
-        }
-        html[start..*cursor].to_string()
+/// Next tokenizer state for raw-text and RCDATA elements.
+///
+/// Matches Python CDATA_CONTENT_ELEMENTS, RCDATA_CONTENT_ELEMENTS, and plaintext.
+/// Noscript stays parsed because Python only treats it as raw-text with scripting
+/// enabled, which ModuleScripts does not use.
+fn raw_text_state(name: &str) -> Option<html5gum::State> {
+    match name {
+        "script" => Some(html5gum::State::ScriptData),
+        "style" | "xmp" | "iframe" | "noembed" | "noframes" => Some(html5gum::State::RawText),
+        "title" | "textarea" => Some(html5gum::State::RcData),
+        "plaintext" => Some(html5gum::State::PlainText),
+        _ => None,
     }
 }
 
@@ -464,6 +399,29 @@ mod tests {
         fs::write(dist.join("assets/app.js"), "console.log('release');").expect("restore js");
         let error = describe(&dist, SOURCE, TAG).expect_err("must fail");
         assert!(error.contains("JavaScript"), "unexpected: {error}");
+    }
+
+    #[test]
+    fn json_raw_text_module_tag_is_ignored() {
+        let dist = fixture_dist();
+        fs::write(
+            dist.join("index.html"),
+            r#"<script type="application/json"><script type="module" src="/assets/app.js"></script></script>"#,
+        )
+        .expect("json html");
+        let error = describe(&dist, SOURCE, TAG).expect_err("must fail");
+        assert!(error.contains("JavaScript"), "unexpected: {error}");
+    }
+
+    #[test]
+    fn charref_module_src_is_accepted() {
+        let dist = fixture_dist();
+        fs::write(
+            dist.join("index.html"),
+            r#"<script type="module" src="/assets/app&#46;js"></script>"#,
+        )
+        .expect("charref html");
+        describe(&dist, SOURCE, TAG).expect("must accept");
     }
 
     #[test]
