@@ -228,18 +228,25 @@ impl mesh::Node {
         if !self.image_endpoints.insert(endpoint) {
             return;
         }
-        self.claim_host_role(mesh::HostRoleClaim::ImageEndpoint, http_port)
-            .await;
-        self.regossip().await;
+        // Becoming a host already gossips the change.
+        if !self
+            .claim_host_role(mesh::HostRoleClaim::ImageEndpoint, http_port)
+            .await
+        {
+            self.regossip().await;
+        }
     }
 
     pub(crate) async fn withdraw_image_endpoint(&self, model: &str) {
         if !self.image_endpoints.remove(model) {
             return;
         }
-        self.release_host_role(mesh::HostRoleClaim::ImageEndpoint)
-            .await;
-        self.regossip().await;
+        if !self
+            .release_host_role(mesh::HostRoleClaim::ImageEndpoint)
+            .await
+        {
+            self.regossip().await;
+        }
     }
 }
 
