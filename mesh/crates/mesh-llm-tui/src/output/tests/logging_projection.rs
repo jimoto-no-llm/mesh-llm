@@ -483,3 +483,94 @@ fn long_canonical_event_rows_wrap_to_the_event_panel_width() {
             .all(|line| spans_plain_text(&line.spans).chars().count() <= 48)
     );
 }
+
+#[test]
+fn split_coordinator_projection_redacts_home_model_path_but_keeps_node_id() {
+    let home = ["HOME", "USERPROFILE"]
+        .into_iter()
+        .find_map(|variable| {
+            std::env::var(variable)
+                .ok()
+                .filter(|home| !home.is_empty() && std::path::Path::new(home).is_absolute())
+        })
+        .expect("HOME or USERPROFILE should be an absolute path");
+    let separator = std::path::MAIN_SEPARATOR;
+    let model_path = format!("{home}{separator}models{separator}demo.gguf");
+    let node_id = "abcdef0123456789".to_string();
+
+    // Premise: the legacy Info rendering already hides a HOME-backed model path.
+    let info = OutputEvent::Info {
+        message: "Split runtime coordinator is abcdef0123; standing by for stage assignment"
+            .to_string(),
+        context: Some(format!("model={model_path}")),
+    };
+    let mut json = JsonFormatter;
+    let mut pretty = PrettyFormatter;
+    for rendered in [
+        json.format(&info).expect("info JSON"),
+        pretty.format(&info).expect("info pretty"),
+    ] {
+        assert!(
+            !rendered.contains(&home),
+            "legacy Info leaked the home directory: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&model_path),
+            "legacy Info leaked the model path: {rendered:?}"
+        );
+    }
+
+    let event = mesh_llm_events::split_assignment::split_coordinator_event(
+        node_id.clone(),
+        model_path.clone(),
+    );
+    let json_line = json.format(&event).expect("split coordinator JSON");
+    let pretty_line = pretty.format(&event).expect("split coordinator pretty");
+    for rendered in [&json_line, &pretty_line] {
+        assert!(
+            !rendered.contains(&home),
+            "split coordinator leaked the home directory: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&model_path),
+            "split coordinator leaked the model path: {rendered:?}"
+        );
+    }
+    let record: Value = serde_json::from_str(json_line.trim_end()).expect("JSONL record");
+    assert_eq!(record["node_id"], node_id);
+    assert!(
+        !record["model"].as_str().unwrap_or_default().contains(&home),
+        "split coordinator JSON model leaked the home directory: {record:?}"
+    );
+    assert!(
+        !record["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains(&home),
+        "split coordinator JSON message leaked the home directory: {record:?}"
+    );
+    assert!(
+        pretty_line.contains("abcdef0123"),
+        "split coordinator pretty should keep the short coordinator display: {pretty_line:?}"
+    );
+
+    let stages = OutputEvent::SplitStages {
+        coordinator_id: Some(node_id.clone()),
+        summary: format!("stage 0 abcdef0123 layers 0-20 ready coordinator; model {model_path}"),
+    };
+    let stages_json = json.format(&stages).expect("split stages JSON");
+    let stages_pretty = pretty.format(&stages).expect("split stages pretty");
+    for rendered in [&stages_json, &stages_pretty] {
+        assert!(
+            !rendered.contains(&home),
+            "split stages leaked the home directory: {rendered:?}"
+        );
+        assert!(
+            !rendered.contains(&model_path),
+            "split stages leaked the model path: {rendered:?}"
+        );
+    }
+    let stages_record: Value =
+        serde_json::from_str(stages_json.trim_end()).expect("split stages JSONL record");
+    assert_eq!(stages_record["coordinator_id"], node_id);
+}
