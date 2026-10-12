@@ -1,6 +1,6 @@
 # JIMOTO — 地元フォーク案内
 
-jimoto-no-llm/mesh-llm の独自案内です。上流の使い方（[README](README.md)）に加えて、このフォークでできること・やることをまとめています。
+jimoto-no-llm/mesh-llm の独自案内です。上流の使い方（[README](README.md)）に加えて、このフォークでできること・やることをまとめています。英語版（参考訳）は [JIMOTO.en.md](JIMOTO.en.md) です。
 
 ## このフォークの方針
 
