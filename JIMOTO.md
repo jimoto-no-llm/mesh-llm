@@ -24,7 +24,7 @@ just build
 
 ## 動作確認対象の主要環境
 
-- Linux（x86_64）・macOS・Windows を主要環境とします。CI も OS 別レーンで回しています。
+- Linux（x86_64）・macOS・Windows を主要環境とします。
 - 各環境の手順は CONTRIBUTING と `install.sh` / `install.ps1` が基準です。
 - 実際に手順どおり動いた記録は Issue #52 に集めます。
 
