@@ -50,6 +50,7 @@ fn run() -> DynResult<()> {
         }
         [command, scope, rest @ ..] if command == "native-runtime" && scope == "select" => {
             native_runtime::select_native_runtime_command(rest)
+        }
         [command, scope, rest @ ..] if command == "ui-distribution" && scope == "stamp" => {
             ui_distribution::ui_distribution_stamp_command(rest)
         }
@@ -70,10 +71,7 @@ fn run() -> DynResult<()> {
             attestation::inspect_release_attestation(rest)
         }
         _ => Err(
-            "usage:\n  cargo run -p xtask -- repo-consistency release-targets\n  cargo run -p xtask -- repo-consistency ci-crate-lists\n  cargo run -p xtask -- repo-consistency publish-crates\n  cargo run -p xtask -- repo-consistency test-all-rust-crate-coverage\n  cargo run -p xtask -- repo-consistency no-console-print\n  cargo run -p xtask -- release-attestation generate-keypair --private-key-out <path> --public-key-out <path>\n  cargo run -p xtask -- release-attestation stamp --binary <path> --signing-key-file <path> [--node-version <semver>] [--build-id <id>] [--commit <sha>] [--target-triple <triple>] [--protocol-min <n>] [--protocol-max <n>]\n  cargo run -p xtask -- release-attestation inspect --binary <path> [--public-key-file <path>] [--json]\n  cargo run -p xtask -- native-runtime select --root <dir> --os <os> --arch <arch> --backend <backend> [--cuda-major <major>] [--json]\n  cargo run -p xtask -- native-runtime select --root <dir> --os <os> --arch <arch> --backend <backend> [--cuda-major <major>] [--json]"
-            "usage:\n  cargo run -p xtask -- repo-consistency release-targets\n  cargo run -p xtask -- repo-consistency ci-crate-lists\n  cargo run -p xtask -- repo-consistency publish-crates\n  cargo run -p xtask -- repo-consistency test-all-rust-crate-coverage\n  cargo run -p xtask -- repo-consistency no-console-print\n  cargo run -p xtask -- release-attestation generate-keypair --private-key-out <path> --public-key-out <path>\n  cargo run -p xtask -- release-attestation stamp --binary <path> --signing-key-file <path> [--node-version <semver>] [--build-id <id>] [--commit <sha>] [--target-triple <triple>] [--protocol-min <n>] [--protocol-max <n>]\n  cargo run -p xtask -- release-attestation inspect --binary <path> [--public-key-file <path>] [--json]
-  cargo run -p xtask -- ui-distribution stamp --dist <dir> --source-sha <sha> --release-tag <tag>
-  cargo run -p xtask -- ui-distribution verify --dist <dir> --source-sha <sha> --release-tag <tag>"
+            "usage:\n  cargo run -p xtask -- repo-consistency release-targets\n  cargo run -p xtask -- repo-consistency ci-crate-lists\n  cargo run -p xtask -- repo-consistency publish-crates\n  cargo run -p xtask -- repo-consistency test-all-rust-crate-coverage\n  cargo run -p xtask -- repo-consistency no-console-print\n  cargo run -p xtask -- release-attestation generate-keypair --private-key-out <path> --public-key-out <path>\n  cargo run -p xtask -- release-attestation stamp --binary <path> --signing-key-file <path> [--node-version <semver>] [--build-id <id>] [--commit <sha>] [--target-triple <triple>] [--protocol-min <n>] [--protocol-max <n>]\n  cargo run -p xtask -- release-attestation inspect --binary <path> [--public-key-file <path>] [--json]\n  cargo run -p xtask -- native-runtime select --root <dir> --os <os> --arch <arch> --backend <backend> [--cuda-major <major>] [--json]\n  cargo run -p xtask -- ui-distribution stamp --dist <dir> --source-sha <sha> --release-tag <tag>\n  cargo run -p xtask -- ui-distribution verify --dist <dir> --source-sha <sha> --release-tag <tag>"
                 .to_string()
                 .into(),
         ),
