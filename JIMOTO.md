@@ -22,6 +22,20 @@ just build
 
 ブラウザで `http://localhost:3131` を開くと Web コンソール、API は `http://localhost:9337/v1` です。フォーク情報の確認は `mesh-llm jimoto`（`--json` 付きで機械可読）です。
 
+## 動作確認対象の主要環境
+
+- Linux（x86_64）・macOS・Windows を主要環境とします。CI も OS 別レーンで回しています。
+- 各環境の手順は CONTRIBUTING と `install.sh` / `install.ps1` が基準です。
+- 実際に手順どおり動いた記録は Issue #52 に集めます。
+
+## 動作確認済み環境一覧
+
+| 環境 | 版 | 確認日 | 記録 |
+|---|---|---|---|
+| — | — | — | — |
+
+まだ記録はありません。動いたら Issue #52 に報告してください。
+
 ## スマホで使う
 
 ### 今日できること：スマホはクライアントにする
@@ -73,7 +87,7 @@ just build
 
 - main は保護されています（承認1名必須・stale 却下・スレッド解決必須・squash のみ）。Organization 管理者のみ PR 要件をバイパスできます。
 - コミット件名と PR タイトルは Conventional Commits です。コミットは `just check-commits`、PR タイトルは `python3 scripts/check-conventional-commit.py --message "<タイトル>"` で確認できます。説明は日本語4行（概要・変更・検証・注意点）＋必要に応じ Architecture 節です。
-- ラベルは `perf`・`skippy`・`scheduler`・`cache`・`maintenance`・`documentation`・`ci:canary` を使います。
+- ラベルは `perf`・`skippy`・`scheduler`・`cache`・`maintenance`・`documentation`・`ci:canary` に加え、フォーク独自の `jimoto`・`upstream-sync`・`mobile` を使います。
 - Rust 変更は対象クレートの check・clippy（警告拒否）・関連テストが必須です。ホット4クレートと workspace には `clippy::perf` ゲートがあります。
 
 ## 上流への追従
@@ -81,4 +95,15 @@ just build
 - 定期的に `Mesh-LLM/mesh-llm` の main を取り込みます。
 - フォーク独自差分（日本語化・高速化・ルール）は小さく保ち、衝突時はフォーク側で解消します。
 - 上流へ返せる改善は上流へ PR します。
+
+## ロードマップ
+
+全体方針は Issue #48 で議論しています。進捗はマイルストーンで管理します。
+
+- [フェーズ0：全体方針の確定](https://github.com/jimoto-no-llm/mesh-llm/milestone/1)
+- [フェーズ1：手順・リリース準備](https://github.com/jimoto-no-llm/mesh-llm/milestone/2)
+- [フェーズ2：運用開始](https://github.com/jimoto-no-llm/mesh-llm/milestone/3)
+- [フェーズ3：対応環境の拡大](https://github.com/jimoto-no-llm/mesh-llm/milestone/4)
+- [フェーズ4：英語対応とSDK整備](https://github.com/jimoto-no-llm/mesh-llm/milestone/5)
+- [フェーズ5：分散推論と報酬設計](https://github.com/jimoto-no-llm/mesh-llm/milestone/6)
 
