@@ -453,6 +453,130 @@ fn missing_upstream_call_id_falls_back_like_the_buffered_translation() {
 }
 
 #[test]
+fn tool_call_count_is_bounded_with_an_invalid_request_error() {
+    let state = state();
+    let lifecycle = usage_lifecycle();
+    let mut events = Vec::new();
+    for index in 0..MAX_STREAMED_TOOL_CALLS as i64 {
+        events.extend(body_events(
+            &state,
+            &lifecycle,
+            Ok(tool_call_chunk(
+                "test-model",
+                json!([{"index": index, "id": format!("call_{index}"),
+                    "type": "function",
+                    "function": {"name": "lookup", "arguments": "{}"}}]),
+            )),
+        ));
+    }
+    assert!(
+        payloads(&events, "error").is_empty(),
+        "exactly {MAX_STREAMED_TOOL_CALLS} tool calls must still stream"
+    );
+
+    events.extend(body_events(
+        &state,
+        &lifecycle,
+        Ok(tool_call_chunk(
+            "test-model",
+            json!([{"index": MAX_STREAMED_TOOL_CALLS as i64, "id": "call_over",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"}}]),
+        )),
+    ));
+    let errors = payloads(&events, "error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["error"]["type"], "invalid_request_error");
+    assert!(
+        errors[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("too many streamed tool calls")
+    );
+
+    // The stream is failed: no tail follows and later chunks are dropped.
+    assert!(tail_events(&state, true).is_empty());
+    assert!(
+        body_events(
+            &state,
+            &lifecycle,
+            Ok(ChatCompletionChunk::delta("test-model", "hi"))
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn tool_call_arguments_are_bounded_with_an_invalid_request_error() {
+    let state = state();
+    let lifecycle = usage_lifecycle();
+    let mut events = Vec::new();
+    let big = "a".repeat(MAX_STREAMED_TOOL_ARGUMENTS_BYTES);
+    events.extend(body_events(
+        &state,
+        &lifecycle,
+        Ok(tool_call_chunk(
+            "test-model",
+            json!([{"index": 0, "id": "call_1", "type": "function",
+                "function": {"name": "lookup", "arguments": big}}]),
+        )),
+    ));
+    assert!(
+        payloads(&events, "error").is_empty(),
+        "arguments exactly at the byte budget must still stream"
+    );
+
+    events.extend(body_events(
+        &state,
+        &lifecycle,
+        Ok(tool_call_chunk(
+            "test-model",
+            json!([{"index": 0, "function": {"arguments": "b"}}]),
+        )),
+    ));
+    let errors = payloads(&events, "error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["error"]["type"], "invalid_request_error");
+    assert!(tail_events(&state, true).is_empty());
+}
+
+#[test]
+fn anonymous_argument_fragments_are_bounded_with_an_invalid_request_error() {
+    let state = state();
+    let lifecycle = usage_lifecycle();
+    let mut events = Vec::new();
+    // No id or name: every fragment waits in the pending backlog, which must
+    // not grow without bound.
+    for _ in 0..MAX_PENDING_ARGUMENT_DELTAS {
+        events.extend(body_events(
+            &state,
+            &lifecycle,
+            Ok(tool_call_chunk(
+                "test-model",
+                json!([{"index": 0, "function": {"arguments": "x"}}]),
+            )),
+        ));
+    }
+    assert!(
+        payloads(&events, "error").is_empty(),
+        "a backlog exactly at the fragment budget must still stream"
+    );
+
+    events.extend(body_events(
+        &state,
+        &lifecycle,
+        Ok(tool_call_chunk(
+            "test-model",
+            json!([{"index": 0, "function": {"arguments": "x"}}]),
+        )),
+    ));
+    let errors = payloads(&events, "error");
+    assert_eq!(errors.len(), 1);
+    assert_eq!(errors[0]["error"]["type"], "invalid_request_error");
+    assert!(tail_events(&state, true).is_empty());
+}
+
+#[test]
 fn failed_streams_emit_no_tail() {
     let state = state();
     state.lock().expect("stream state lock").failed = true;

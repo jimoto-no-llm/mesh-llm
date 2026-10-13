@@ -1,5 +1,6 @@
 //! Live Responses SSE translation at the Mesh public proxy.
 //! Upstream chat chunks are translated without buffering the client response.
+use super::super::send::openai_error_body;
 use super::*;
 use anyhow::Context;
 use std::collections::BTreeMap;
@@ -11,6 +12,21 @@ enum OutputSlot {
     Message,
     ToolCall(u64),
 }
+
+/// Maximum distinct tool calls folded into one translated Responses stream.
+///
+/// OpenAI serves at most 128 parallel function calls per response, so more
+/// distinct upstream `index` values can only come from crafted fragments.
+/// Bounding entries also bounds `slots`, which grows once per tool call.
+const MAX_STREAMED_TOOL_CALLS: usize = 128;
+/// Maximum folded `function.arguments` bytes retained per tool call. Real
+/// argument payloads are kilobytes; 1 MiB leaves ample headroom while
+/// bounding per-stream memory no matter how many fragments arrive.
+const MAX_STREAMED_TOOL_ARGUMENTS_BYTES: usize = 1024 * 1024;
+/// Maximum reasoning bytes buffered before the first output item opens.
+/// Reasoning can arrive before any slot exists, so without a cap a fragment
+/// dribble could grow `pending_reasoning` without ever emitting an item.
+const MAX_BUFFERED_REASONING_BYTES: usize = 1024 * 1024;
 
 #[derive(Default)]
 struct StreamedResponsesToolCall {
@@ -35,6 +51,7 @@ struct ResponsesStreamRelayState {
     slots: Vec<OutputSlot>,
     tool_calls: BTreeMap<u64, StreamedResponsesToolCall>,
     pending_reasoning: Vec<String>,
+    pending_reasoning_bytes: usize,
 }
 
 impl ResponsesStreamRelayState {
@@ -58,6 +75,7 @@ impl ResponsesStreamRelayState {
             slots: Vec::new(),
             tool_calls: BTreeMap::new(),
             pending_reasoning: Vec::new(),
+            pending_reasoning_bytes: 0,
         }
     }
 
@@ -282,7 +300,7 @@ async fn process_translated_responses_frame(
         .context("parse typed upstream chat stream chunk")?;
     update_translated_responses_model(state, &chunk);
     emit_translated_response_created(tcp_stream, capture, state, false).await?;
-    queue_translated_reasoning_delta(state, &chunk);
+    queue_translated_reasoning_delta(tcp_stream, capture, state, &chunk).await?;
     emit_translated_output_delta(tcp_stream, capture, state, &chunk).await?;
     emit_translated_tool_deltas(tcp_stream, capture, state, &chunk).await?;
     flush_translated_reasoning_deltas(tcp_stream, capture, state).await?;
@@ -325,18 +343,46 @@ async fn emit_translated_response_created(
 // Reasoning can arrive before the first text/tool item. Keep each fragment
 // until an item is added so a tool-only response never references a phantom
 // msg_* item or needs an empty assistant message.
-fn queue_translated_reasoning_delta(
+async fn queue_translated_reasoning_delta(
+    tcp_stream: &mut ClientStream,
+    capture: &mut Option<OpenAiStreamArtifactCapture>,
     state: &mut ResponsesStreamRelayState,
     chunk: &skippy_inference_api::responses::ChatCompletionStreamChunk,
-) {
+) -> Result<()> {
     if let Some(delta) = chunk
         .choices
         .first()
         .and_then(|choice| choice.delta.as_ref())
         .and_then(|delta| delta.reasoning_content.as_deref())
     {
+        if state.pending_reasoning_bytes + delta.len() > MAX_BUFFERED_REASONING_BYTES {
+            return reject_translated_stream_over_limit(
+                tcp_stream,
+                capture,
+                format!("buffered reasoning deltas exceed {MAX_BUFFERED_REASONING_BYTES} bytes"),
+            )
+            .await;
+        }
+        state.pending_reasoning_bytes += delta.len();
         state.pending_reasoning.push(delta.to_owned());
     }
+    Ok(())
+}
+
+/// Reject a translated stream that breached a folding limit. Streaming
+/// already committed `200 OK` headers, so a fresh 400 status is impossible;
+/// instead relay the same 400 error body `send_400` would have written, then
+/// fail the relay so the connection closes without `response.completed`.
+/// The protocol is unchanged — `error` events already exist on this path.
+async fn reject_translated_stream_over_limit(
+    tcp_stream: &mut ClientStream,
+    capture: &mut Option<OpenAiStreamArtifactCapture>,
+    message: String,
+) -> Result<()> {
+    let body = String::from_utf8(openai_error_body(400, &message))
+        .context("serialize stream limit error")?;
+    write_captured_sse_event(tcp_stream, capture, Some("error"), &body).await?;
+    Err(anyhow!(message))
 }
 
 async fn flush_translated_reasoning_deltas(
@@ -351,6 +397,7 @@ async fn flush_translated_reasoning_deltas(
         OutputSlot::Message => state.item_id.clone(),
         OutputSlot::ToolCall(index) => state.tool_item_id(index),
     };
+    state.pending_reasoning_bytes = 0;
     for delta in std::mem::take(&mut state.pending_reasoning) {
         let sequence_number = state.next_sequence_number();
         let event = response_adapter::responses_stream_reasoning_delta_event_with_sequence(
@@ -506,6 +553,14 @@ async fn fold_translated_tool_delta(
         .unwrap_or_default();
     let opened_here = !state.tool_calls.contains_key(&index);
     if opened_here {
+        if state.tool_calls.len() >= MAX_STREAMED_TOOL_CALLS {
+            return reject_translated_stream_over_limit(
+                tcp_stream,
+                capture,
+                format!("too many streamed tool calls (limit {MAX_STREAMED_TOOL_CALLS})"),
+            )
+            .await;
+        }
         let output_index = state.reserve_slot(OutputSlot::ToolCall(index));
         state.tool_calls.insert(
             index,
@@ -524,6 +579,16 @@ async fn fold_translated_tool_delta(
     }
     if let Some(name) = name {
         call.name = Some(name.to_owned());
+    }
+    if call.arguments.len() + arguments.len() > MAX_STREAMED_TOOL_ARGUMENTS_BYTES {
+        return reject_translated_stream_over_limit(
+            tcp_stream,
+            capture,
+            format!(
+                "streamed tool call arguments exceed {MAX_STREAMED_TOOL_ARGUMENTS_BYTES} bytes"
+            ),
+        )
+        .await;
     }
     call.arguments.push_str(arguments);
     let output_index = call.output_index;

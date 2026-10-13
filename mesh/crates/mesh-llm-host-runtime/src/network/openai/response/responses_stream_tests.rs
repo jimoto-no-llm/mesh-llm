@@ -51,6 +51,42 @@ fn events_of_type<'a>(events: &'a [Value], kind: &str) -> Vec<&'a Value> {
         .collect()
 }
 
+/// Drive the relay like [`relay_frames`], but keep the fallible result and
+/// the raw wire so limit rejections (which abort the stream) can be asserted.
+async fn relay_frames_result(frames: Vec<Value>) -> (anyhow::Result<RouteAttemptResult>, String) {
+    let body = frames
+        .into_iter()
+        .map(|frame| format!("data: {frame}\n\n"))
+        .collect::<String>()
+        + "data: [DONE]\n\n";
+    let header = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        let mut client = ClientStream::from(socket);
+        let mut reader = std::io::Cursor::new(body.into_bytes());
+        relay_translated_responses_stream(
+            &mut client,
+            &mut reader,
+            ResponseProbe {
+                buffered: header.to_vec(),
+                header_end: header.len(),
+                status_code: 200,
+                retryable_context_overflow: false,
+            },
+            ResponseRetryPolicy::next_target_available(false),
+            None,
+            OpenAiRouteObserver::default(),
+        )
+        .await
+    });
+    let mut socket = ClientStream::connect(addr).await.unwrap();
+    let mut wire = String::new();
+    socket.read_to_string(&mut wire).await.unwrap();
+    (server.await.unwrap(), wire)
+}
+
 #[tokio::test]
 async fn text_stream_preserves_chunk_deltas_and_completed_usage() {
     let (result, events) = relay_frames(vec![
@@ -310,4 +346,76 @@ async fn function_arguments_reach_client_before_upstream_done() {
         server.await.unwrap(),
         RouteAttemptResult::Delivered { .. }
     ));
+}
+
+#[tokio::test]
+async fn tool_call_count_is_bounded_and_rejected_explicitly() {
+    let mut frames: Vec<Value> = (0..MAX_STREAMED_TOOL_CALLS as u64)
+        .map(|index| {
+            json!({"model":"qwen","choices":[{"delta":{"tool_calls": [{
+                "index": index, "id": format!("call_{index}"),
+                "function": {"name": "lookup", "arguments": "{}"}
+            }]}}]})
+        })
+        .collect();
+    frames.push(json!({"model":"qwen","choices":[{"delta":{"tool_calls": [{
+        "index": MAX_STREAMED_TOOL_CALLS as u64, "id": "call_over",
+        "function": {"name": "lookup", "arguments": "{}"}
+    }]}}]}));
+    let (result, wire) = relay_frames_result(frames).await;
+    let err = result.expect_err("the 129th tool call must abort the relay");
+    assert!(
+        err.to_string().contains("too many streamed tool calls"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        wire.contains("invalid_request_error"),
+        "the client must see the 400 error body: {wire}"
+    );
+    assert!(!wire.contains("response.completed"));
+}
+
+#[tokio::test]
+async fn tool_call_arguments_are_bounded_and_rejected_explicitly() {
+    let budget = "a".repeat(MAX_STREAMED_TOOL_ARGUMENTS_BYTES);
+    let (result, wire) = relay_frames_result(vec![
+        json!({"model":"qwen","choices":[{"delta":{"tool_calls": [{
+            "index": 0, "id": "call_1",
+            "function": {"name": "lookup", "arguments": budget}
+        }]}}]}),
+        json!({"model":"qwen","choices":[{"delta":{"tool_calls": [{
+            "index": 0, "function": {"arguments": "b"}
+        }]}}]}),
+    ])
+    .await;
+    let err = result.expect_err("arguments past the byte budget must abort the relay");
+    assert!(
+        err.to_string()
+            .contains("streamed tool call arguments exceed"),
+        "unexpected error: {err}"
+    );
+    assert!(wire.contains("invalid_request_error"));
+    assert!(!wire.contains("response.completed"));
+}
+
+#[tokio::test]
+async fn reasoning_dribble_without_items_is_bounded() {
+    // Reasoning arrives before any output slot opens; without a cap these
+    // fragments would accumulate forever while emitting nothing.
+    let dribble = "r".repeat(1024);
+    let frames: Vec<Value> = (0..=(MAX_BUFFERED_REASONING_BYTES / 1024))
+        .map(|_| {
+            json!({"model":"qwen","choices":[{"delta":{
+                "reasoning_content": dribble
+            }}]})
+        })
+        .collect();
+    let (result, wire) = relay_frames_result(frames).await;
+    let err = result.expect_err("unbounded reasoning backlog must abort the relay");
+    assert!(
+        err.to_string().contains("buffered reasoning deltas exceed"),
+        "unexpected error: {err}"
+    );
+    assert!(wire.contains("invalid_request_error"));
+    assert!(!wire.contains("response.completed"));
 }
