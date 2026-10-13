@@ -704,6 +704,42 @@ fn is_audio_upload_path(path: &str) -> bool {
     )
 }
 
+/// Hop-by-hop headers (RFC 9110 7.6.1) this proxy consumes and never
+/// forwards. `content-length` is not listed here because request framing
+/// re-derives it; `connection` is matched here and its value is parsed again
+/// by [`connection_hop_by_hop_tokens`] for the names it lists.
+const HOP_BY_HOP_HEADERS: [&str; 8] = [
+    "connection",
+    "keep-alive",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "proxy-connection",
+    "proxy-authorization",
+];
+
+/// Header names listed in `Connection:` are themselves hop-by-hop, so
+/// `Connection: X-Foo` makes `X-Foo` undeliverable to the next hop.
+fn connection_hop_by_hop_tokens<'a>(headers: &'a [httparse::Header<'a>]) -> Vec<&'a str> {
+    let mut tokens = Vec::new();
+    for header in headers {
+        if !header.name.eq_ignore_ascii_case("connection") {
+            continue;
+        }
+        let Ok(value) = std::str::from_utf8(header.value) else {
+            continue;
+        };
+        for token in value.split(',') {
+            let token = token.trim();
+            if !token.is_empty() {
+                tokens.push(token);
+            }
+        }
+    }
+    tokens
+}
+
 fn finalize_forwarded_request(
     mut raw: Vec<u8>,
     header_end: usize,
@@ -731,11 +767,22 @@ fn finalize_forwarded_request(
     // canonical `x-request-id` is resolved and re-stamped below.
     let (client_nonce, client_nonce_origin) = client_nonce_from_headers(req.headers);
 
-    let mut rebuilt = format!("{method} {path} HTTP/1.{version}\r\n");
+    let connection_tokens = connection_hop_by_hop_tokens(req.headers);
+    let mut rebuilt: Vec<u8> = Vec::with_capacity(raw.len());
+    rebuilt.extend_from_slice(format!("{method} {path} HTTP/1.{version}\r\n").as_bytes());
 
     for header in req.headers.iter() {
         let name = header.name;
-        if name.eq_ignore_ascii_case("connection") {
+        // RFC 9110 7.6.1: hop-by-hop headers are consumed by this proxy and
+        // never forwarded, including every name the client listed in
+        // `Connection:`.
+        if HOP_BY_HOP_HEADERS
+            .iter()
+            .any(|hop| name.eq_ignore_ascii_case(hop))
+            || connection_tokens
+                .iter()
+                .any(|token| name.eq_ignore_ascii_case(token))
+        {
             continue;
         }
         if name.eq_ignore_ascii_case("x-request-id") {
@@ -759,27 +806,31 @@ fn finalize_forwarded_request(
         if strip_expect && name.eq_ignore_ascii_case("expect") {
             continue;
         }
-        if name.eq_ignore_ascii_case("content-length")
-            || name.eq_ignore_ascii_case("transfer-encoding")
-        {
+        if name.eq_ignore_ascii_case("content-length") {
             continue;
         }
-        let value = std::str::from_utf8(header.value).unwrap_or("");
-        rebuilt.push_str(&format!("{name}: {value}\r\n"));
+        // Preserve the value byte-for-byte: HTTP header values may carry
+        // obs-text (0x80-0xFF), and rewriting them through UTF-8 would
+        // silently replace what the upstream receives with an empty value.
+        rebuilt.extend_from_slice(name.as_bytes());
+        rebuilt.extend_from_slice(b": ");
+        rebuilt.extend_from_slice(header.value);
+        rebuilt.extend_from_slice(b"\r\n");
     }
+    let mut tail = String::new();
     if let Some(body) = rewritten_body {
-        rebuilt.push_str(&format!("Content-Length: {}\r\n", body.len()));
+        tail.push_str(&format!("Content-Length: {}\r\n", body.len()));
     } else {
-        append_request_framing(&mut rebuilt, framing);
+        append_request_framing(&mut tail, framing);
     }
-    rebuilt.push_str(&format!("x-request-id: {}\r\n", request_id.as_uuid()));
-    rebuilt.push_str(&format!(
+    tail.push_str(&format!("x-request-id: {}\r\n", request_id.as_uuid()));
+    tail.push_str(&format!(
         "{}: {}\r\n",
         skippy_inference_api::lifecycle::CLIENT_NONCE_HEADER.as_str(),
         client_nonce,
     ));
     if let Some(origin) = client_nonce_origin {
-        rebuilt.push_str(&format!(
+        tail.push_str(&format!(
             "{}: {origin}\r\n",
             skippy_inference_api::lifecycle::CLIENT_NONCE_ORIGIN_HEADER.as_str(),
         ));
@@ -787,12 +838,13 @@ fn finalize_forwarded_request(
 
     // The proxy buffers exactly one request for routing, so force a single-request
     // connection contract upstream instead of reusing the client connection blindly.
-    rebuilt.push_str("Connection: close\r\n\r\n");
+    tail.push_str("Connection: close\r\n\r\n");
+    rebuilt.extend_from_slice(tail.as_bytes());
     if rebuilt.len() > max_header_bytes {
         bail!("HTTP headers exceed {max_header_bytes} bytes");
     }
 
-    let mut forwarded = rebuilt.into_bytes();
+    let mut forwarded = rebuilt;
     forwarded.extend_from_slice(rewritten_body.unwrap_or(&original_body));
     Ok(forwarded)
 }

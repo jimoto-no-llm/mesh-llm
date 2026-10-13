@@ -1251,3 +1251,83 @@ fn mesh_routing_header_values_rejects_non_utf8_x_mesh_exclude() {
     let request = request_with_raw(&raw);
     assert!(request.mesh_routing_header_values().is_err());
 }
+
+fn forwarded_header_block(raw: &[u8]) -> Vec<u8> {
+    let header_end = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("request fixture has a header terminator")
+        + 4;
+    finalize_forwarded_request(
+        raw.to_vec(),
+        header_end,
+        false,
+        None,
+        None,
+        RequestId::new(),
+        64 * 1024,
+    )
+    .expect("forwarded request rebuilds")
+}
+
+#[test]
+fn forwarded_request_drops_every_hop_by_hop_header() {
+    let raw = b"POST /v1/chat/completions HTTP/1.1\r\n\
+        host: 127.0.0.1\r\n\
+        content-length: 2\r\n\
+        keep-alive: timeout=5\r\n\
+        TE: trailers\r\n\
+        Upgrade: websocket\r\n\
+        Trailer: x-checksum\r\n\
+        Proxy-Connection: keep-alive\r\n\
+        Proxy-Authorization: Basic c2VjcmV0\r\n\
+        Connection: close, x-foo\r\n\
+        X-Foo: must-not-arrive\r\n\
+        X-Keep: kept\r\n\r\n{}";
+    let forwarded = forwarded_header_block(raw);
+    let text = String::from_utf8_lossy(&forwarded).to_ascii_lowercase();
+
+    for stripped in [
+        "keep-alive:",
+        "te:",
+        "upgrade:",
+        "trailer:",
+        "proxy-connection:",
+        "proxy-authorization:",
+        "x-foo:",
+    ] {
+        assert!(
+            !text.contains(stripped),
+            "hop-by-hop header {stripped} must not reach the upstream: {text}"
+        );
+    }
+    assert!(
+        text.contains("x-keep: kept"),
+        "ordinary end-to-end headers must survive: {text}"
+    );
+    assert!(
+        text.contains("connection: close"),
+        "the proxy still pins a single-request upstream connection: {text}"
+    );
+}
+
+#[test]
+fn forwarded_request_preserves_non_utf8_header_values() {
+    let mut raw = b"POST /v1/chat/completions HTTP/1.1\r\n\
+        host: 127.0.0.1\r\n\
+        content-length: 2\r\n\
+        x-custom: "
+        .to_vec();
+    raw.extend_from_slice(&[0xff, 0xfe]);
+    raw.extend_from_slice(b"\r\n\r\n{}");
+
+    let forwarded = forwarded_header_block(&raw);
+    let needle = b"x-custom: \xff\xfe\r\n";
+    assert!(
+        forwarded
+            .windows(needle.len())
+            .any(|window| window == needle),
+        "obs-text header values must be forwarded byte-for-byte instead of emptied: {:?}",
+        String::from_utf8_lossy(&forwarded)
+    );
+}
