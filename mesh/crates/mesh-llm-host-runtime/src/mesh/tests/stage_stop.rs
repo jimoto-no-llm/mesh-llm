@@ -153,3 +153,29 @@ async fn stage_stop_failures_preserve_transport_bridge() -> Result<()> {
     }
     Ok(())
 }
+
+#[tokio::test]
+async fn stage_stop_clears_split_coordinator_when_no_bridges_remain() -> Result<()> {
+    let node = Node::new_for_tests(NodeRole::Worker).await?;
+    let coordinator = make_test_endpoint_id(0x42);
+    node.note_split_coordinator(coordinator).await;
+    assert!(node.split_coordinator().await.is_some());
+
+    node
+        .ensure_stage_transport_bridge(make_test_endpoint_id(0x93), "topo", "run", "s0")
+        .await?;
+    node
+        .ensure_stage_transport_bridge(make_test_endpoint_id(0x93), "topo", "run", "s1")
+        .await?;
+    node.stop_stage_transport_bridge("topo", "run", "s0").await;
+    assert!(
+        node.split_coordinator().await.is_some(),
+        "coordinator must survive while a stage remains"
+    );
+    node.stop_stage_transport_bridge("topo", "run", "s1").await;
+    assert!(
+        node.split_coordinator().await.is_none(),
+        "coordinator must clear once the last bridge stops"
+    );
+    Ok(())
+}

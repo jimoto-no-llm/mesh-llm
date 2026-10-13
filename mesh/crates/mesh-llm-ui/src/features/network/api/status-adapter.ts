@@ -168,7 +168,7 @@ function adaptPeer(peer: PeerInfo, fallbackIndex: number): Peer {
 
 function isSplitParticipant(payload: StatusPayload): boolean {
   const stages = payload.runtime?.stages ?? []
-  return stages.some((s) => s.node_id === payload.node_id)
+  return stages.some((s) => sameNodeId(s.node_id, payload.node_id))
 }
 
 function adaptSelfPeer(payload: StatusPayload): Peer {
@@ -378,8 +378,10 @@ function annotateSplitRoles(peers: Peer[], payload: StatusPayload): Peer[] {
     const isCoordinator =
       coordinator != null &&
       (sameNodeId(coordinator.node_id, peer.id) || sameNodeId(coordinator.short_node_id, peer.id))
+    // Only the local node waits: every other standby may never join this split.
+    const isSelf = peer.id === payload.node_id
     const waitingForCoordinator =
-      coordinator && !isCoordinator && stages.length === 0 && peer.nodeState === 'standby'
+      coordinator && !isCoordinator && isSelf && stages.length === 0 && peer.nodeState === 'standby'
         ? (coordinator.hostname ?? coordinator.short_node_id)
         : undefined
     return {

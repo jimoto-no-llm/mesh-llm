@@ -630,8 +630,15 @@ impl Node {
         stage_id: &str,
     ) {
         let key = stage_runtime_status_key(topology_id, run_id, stage_id);
-        if let Some(bridge) = self.stage_transport_bridges.lock().await.remove(&key) {
-            bridge.abort();
+        let bridges_empty = {
+            let mut bridges = self.stage_transport_bridges.lock().await;
+            if let Some(bridge) = bridges.remove(&key) {
+                bridge.abort();
+            }
+            bridges.is_empty()
+        };
+        if bridges_empty {
+            self.clear_split_coordinator().await;
         }
     }
 
@@ -1297,6 +1304,13 @@ impl Node {
 
     pub(crate) async fn split_coordinator(&self) -> Option<SplitCoordinatorObservation> {
         self.split_coordinator.lock().await.clone()
+    }
+
+    /// Forget the elected coordinator once this node stops taking part in the
+    /// split (stages withdrawn, model unloaded or switched). Without this the
+    /// last observation lingers in API, Web and TUI surfaces.
+    pub(crate) async fn clear_split_coordinator(&self) {
+        *self.split_coordinator.lock().await = None;
     }
 
     #[cfg(test)]

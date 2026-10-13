@@ -731,12 +731,25 @@ describe('advertised memory in the dashboard adapter', () => {
           serving_models: [],
           hosted_models: [],
           hostname: 'big.local'
+        },
+        {
+          id: 'othernode1',
+          role: 'Host',
+          state: 'standby',
+          models: [],
+          vram_gb: 8,
+          serving_models: [],
+          hosted_models: [],
+          hostname: 'other.local'
         }
       ]
     })
 
     expect(waiting.peers.find((peer) => peer.id === 'smallnode1')).toEqual(
       expect.objectContaining({ coordinator: undefined, waitingForCoordinator: 'big.local' })
+    )
+    expect(waiting.peers.find((peer) => peer.id === 'othernode1')).toEqual(
+      expect.objectContaining({ coordinator: undefined, waitingForCoordinator: undefined })
     )
     expect(waiting.peers.find((peer) => peer.id === 'bignode012')).toEqual(
       expect.objectContaining({ coordinator: true, waitingForCoordinator: undefined })
