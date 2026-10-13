@@ -145,9 +145,15 @@ fn function_call_tool_call(item: &Value) -> Result<Value, InferenceError> {
 
 fn function_call_output_message(item: &Value) -> Result<Value, InferenceError> {
     let call_id = required_item_field(item, "function_call_output", "call_id")?;
-    let output = item.get("output").map(scalar_text).ok_or_else(|| {
+    let output = item.get("output").ok_or_else(|| {
         InferenceError::invalid_request("responses function_call_output item is missing output")
     })?;
+    // Lists (and single block objects) go through the message content path
+    // so text collapses to a string while image/file blocks keep working.
+    let output = match output {
+        Value::Array(_) | Value::Object(_) => translate_responses_message_content(output)?,
+        single => Value::String(scalar_text(single)),
+    };
     Ok(serde_json::json!({
         "role": "tool",
         "tool_call_id": call_id,
@@ -517,6 +523,58 @@ mod tests {
         assert_eq!(messages[2]["role"], "tool");
         assert_eq!(messages[2]["tool_call_id"], "call_1");
         assert_eq!(messages[2]["content"], "sunny");
+    }
+
+    #[test]
+    fn function_call_output_list_uses_content_item_translation() {
+        let input = serde_json::json!([
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "lookup",
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [{"type": "input_text", "text": "sunny"}]
+            }
+        ]);
+
+        let messages = translate_responses_input_to_messages(&input)
+            .expect("output lists are supported input");
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[1]["role"], "tool");
+        assert_eq!(messages[1]["content"], "sunny");
+
+        let input = serde_json::json!([
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "lookup",
+                "arguments": "{}"
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": [
+                    {"type": "input_text", "text": "sunny"},
+                    {"type": "input_image", "image_url": "https://example.test/sky.png"}
+                ]
+            }
+        ]);
+
+        let messages = translate_responses_input_to_messages(&input)
+            .expect("multimodal output lists are supported input");
+
+        assert_eq!(
+            messages[1]["content"],
+            serde_json::json!([
+                {"type": "text", "text": "sunny"},
+                {"type": "image_url", "image_url": {"url": "https://example.test/sky.png"}}
+            ])
+        );
     }
 
     #[test]
