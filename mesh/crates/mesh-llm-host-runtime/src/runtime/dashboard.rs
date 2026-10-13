@@ -1,6 +1,6 @@
 use super::status::current_time_unix_ms;
 use super::{LocalRuntimeModelHandle, sort_dashboard_endpoint_rows};
-use crate::{api, mesh, models, plugin};
+use crate::{api, mesh, models, plugin, system};
 use mesh_llm_events::{
     DashboardAcceptedRequestBucket, DashboardEndpointRow, DashboardModelLane, DashboardModelRow,
     DashboardProcessRow, DashboardSnapshot, DashboardSnapshotFuture, DashboardSnapshotProvider,
@@ -39,6 +39,7 @@ pub(super) struct RuntimeDashboardSnapshotProvider {
     pub(super) inventory_snapshot_ttl: Duration,
     pub(super) inventory_snapshot_loader:
         Arc<dyn Fn() -> crate::models::LocalModelInventorySnapshot + Send + Sync>,
+    pub(super) system_resources: Arc<system::resources::SystemResourcesSampler>,
 }
 
 #[cfg(test)]
@@ -83,6 +84,7 @@ impl RuntimeDashboardSnapshotProvider {
             inventory_snapshot_loader: Arc::new(|| {
                 crate::models::scan_local_inventory_snapshot_with_progress(|_| {})
             }),
+            system_resources: Arc::new(system::resources::SystemResourcesSampler::new()),
         }
     }
 
@@ -107,6 +109,7 @@ impl RuntimeDashboardSnapshotProvider {
             )),
             inventory_snapshot_ttl: options.inventory_snapshot_ttl,
             inventory_snapshot_loader: options.inventory_snapshot_loader,
+            system_resources: Arc::new(system::resources::SystemResourcesSampler::new()),
         }
     }
 
@@ -316,7 +319,27 @@ impl DashboardSnapshotProvider for RuntimeDashboardSnapshotProvider {
             }
             sort_dashboard_endpoint_rows(&mut webserver_rows);
 
+            let sampler = self.system_resources.clone();
+            let system_resources =
+                match tokio::task::spawn_blocking(move || sampler.sample_blocking()).await {
+                    Ok(sample) => sample,
+                    Err(err) => {
+                        tracing::warn!("dashboard system resources snapshot failed: {err}");
+                        None
+                    }
+                };
             DashboardSnapshot {
+                system_memory_total_bytes: system_resources
+                    .as_ref()
+                    .and_then(|r| r.memory_total_bytes),
+                system_memory_available_bytes: system_resources
+                    .as_ref()
+                    .and_then(|r| r.memory_available_bytes),
+                system_disk_path: system_resources.as_ref().and_then(|r| r.disk_path.clone()),
+                system_disk_total_bytes: system_resources.as_ref().and_then(|r| r.disk_total_bytes),
+                system_disk_available_bytes: system_resources
+                    .as_ref()
+                    .and_then(|r| r.disk_available_bytes),
                 llama_process_rows: process_rows
                     .into_iter()
                     .map(|process| DashboardProcessRow {

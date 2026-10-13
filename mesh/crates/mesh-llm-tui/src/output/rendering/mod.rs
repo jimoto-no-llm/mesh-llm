@@ -161,52 +161,39 @@ pub(super) enum TuiEventRow<'a> {
     Padding,
 }
 
+pub(in crate::output) const STATUS_PEER_NAMES_MIN_WIDTH: u16 = 100;
+pub(in crate::output) const STATUS_RESOURCE_METRICS_MIN_WIDTH: u16 = 140;
+pub(in crate::output) const STATUS_FULL_HINTS_MIN_WIDTH: u16 = 200;
+pub(in crate::output) const STATUS_REDUCED_HINTS_MIN_WIDTH: u16 = 160;
+pub(in crate::output) const STATUS_SHORT_HINTS_MIN_WIDTH: u16 = 100;
+pub(in crate::output) const STATUS_PEER_SUMMARY_MAX_WIDTH: usize = 40;
+
 pub(in crate::output) type TuiTerminal = Terminal<CrosstermBackend<TerminalOut>>;
 pub(in crate::output) fn dashboard_status_line(
     state: &DashboardState,
     width: u16,
 ) -> Line<'static> {
-    let theme = tui_theme();
-    let readiness = readiness_label(state);
-    let mut left_spans = vec![Span::styled(
-        readiness_badge(readiness),
-        readiness_badge_style(readiness),
-    )];
-    left_spans.push(Span::raw(" "));
-    push_status_key_hint(&mut left_spans, "Q", "Quit");
-    push_status_key_hint(&mut left_spans, "Tab", "Next");
-    push_status_key_hint(&mut left_spans, "Enter/Z", "Full");
-    push_status_key_hint(&mut left_spans, "↑/↓", "Window");
-    push_status_key_hint(&mut left_spans, "Shift-Tab", "Prev");
-    push_status_key_hint(&mut left_spans, "/", "Filter");
-    push_status_key_hint(&mut left_spans, "F", "Follow");
-    push_status_key_hint(&mut left_spans, "R", "Refresh");
-
+    let mut spans = status_left_spans(state, width);
+    let full_names = width >= STATUS_PEER_NAMES_MIN_WIDTH;
+    let full_resources = should_show_status_resource_metrics(width);
+    // Degrade from full detail toward the essentials so the line never
+    // overflows: peer names, resource metrics, then model/process counts.
+    // Uptime and the clock always survive.
     let mut right_spans = Vec::new();
-    push_status_metric(&mut right_spans, "peers", state.peer_ids.len().to_string());
-    push_status_metric(
-        &mut right_spans,
-        "models",
-        visible_model_count(state).to_string(),
-    );
-    push_status_metric(
-        &mut right_spans,
-        "processes",
-        visible_process_count(state).to_string(),
-    );
-    push_status_metric(&mut right_spans, "uptime", dashboard_uptime_label(state));
-    right_spans.push(status_separator_span());
-    right_spans.push(Span::styled(
-        Local::now().format("%H:%M:%S").to_string(),
-        Style::default().fg(theme.muted),
-    ));
-
-    let mut spans = left_spans;
-    let left_width = status_spans_width(&spans);
-    let right_width = status_spans_width(&right_spans);
+    for (peer_names, with_resources, with_counts) in [
+        (full_names, full_resources, true),
+        (false, full_resources, true),
+        (false, false, true),
+        (false, false, false),
+    ] {
+        right_spans = build_status_right_spans(state, peer_names, with_resources, with_counts);
+        if status_spans_width(&spans) + 1 + status_spans_width(&right_spans) <= usize::from(width) {
+            break;
+        }
+    }
     let gap_width = usize::from(width)
-        .saturating_sub(left_width)
-        .saturating_sub(right_width)
+        .saturating_sub(status_spans_width(&spans))
+        .saturating_sub(status_spans_width(&right_spans))
         .max(1);
     spans.push(status_gap_span(gap_width));
     spans.extend(right_spans);
@@ -214,8 +201,95 @@ pub(in crate::output) fn dashboard_status_line(
     Line::from(spans)
 }
 
+pub(in crate::output) fn status_left_spans(
+    state: &DashboardState,
+    width: u16,
+) -> Vec<Span<'static>> {
+    let readiness = readiness_label(state);
+    let mut left_spans = vec![Span::styled(
+        readiness_badge(readiness),
+        readiness_badge_style(readiness),
+    )];
+    left_spans.push(Span::raw(" "));
+    let hints: &[(&str, &str)] = if width >= STATUS_FULL_HINTS_MIN_WIDTH {
+        &[
+            ("Q", "Quit"),
+            ("Tab", "Next"),
+            ("Enter/Z", "Full"),
+            ("↑/↓", "Window"),
+            ("Shift-Tab", "Prev"),
+            ("/", "Filter"),
+            ("F", "Follow"),
+            ("R", "Refresh"),
+        ]
+    } else if width >= STATUS_REDUCED_HINTS_MIN_WIDTH {
+        &[
+            ("Q", "Quit"),
+            ("Tab", "Next"),
+            ("Enter/Z", "Full"),
+            ("↑/↓", "Window"),
+            ("F", "Follow"),
+            ("R", "Refresh"),
+        ]
+    } else if width >= STATUS_SHORT_HINTS_MIN_WIDTH {
+        &[("Q", "Quit"), ("R", "Refresh")]
+    } else {
+        &[("Q", "Quit")]
+    };
+    for (key, label) in hints {
+        push_status_key_hint(&mut left_spans, key, label);
+    }
+    left_spans
+}
+
+fn build_status_right_spans(
+    state: &DashboardState,
+    peer_names: bool,
+    with_resources: bool,
+    with_counts: bool,
+) -> Vec<Span<'static>> {
+    let theme = tui_theme();
+    let mut right_spans = Vec::new();
+    push_status_metric(
+        &mut right_spans,
+        "peers",
+        if peer_names {
+            tui_peer_list_summary(state)
+        } else {
+            state.peer_ids.len().to_string()
+        },
+    );
+    if with_counts {
+        push_status_metric(
+            &mut right_spans,
+            "models",
+            visible_model_count(state).to_string(),
+        );
+        push_status_metric(
+            &mut right_spans,
+            "processes",
+            visible_process_count(state).to_string(),
+        );
+    }
+    if with_resources {
+        if let Some(memory) = tui_memory_summary(state) {
+            push_status_metric(&mut right_spans, "mem", memory);
+        }
+        if let Some(disk) = tui_disk_summary(state) {
+            push_status_metric(&mut right_spans, "disk", disk);
+        }
+    }
+    push_status_metric(&mut right_spans, "uptime", dashboard_uptime_label(state));
+    right_spans.push(status_separator_span());
+    right_spans.push(Span::styled(
+        Local::now().format("%H:%M:%S").to_string(),
+        Style::default().fg(theme.muted),
+    ));
+    right_spans
+}
+
 pub(in crate::output) fn status_spans_width(spans: &[Span<'_>]) -> usize {
-    spans.iter().map(|span| span.content.chars().count()).sum()
+    spans.iter().map(Span::width).sum()
 }
 
 pub(in crate::output) fn status_gap_span(width: usize) -> Span<'static> {
@@ -234,6 +308,98 @@ pub(in crate::output) fn push_status_metric(
         Style::default().fg(theme.dim),
     ));
     spans.push(Span::styled(value, Style::default().fg(theme.text)));
+}
+
+pub(in crate::output) fn truncate_to_display_width(text: &str, width: usize) -> String {
+    if Span::raw(text).width() <= width {
+        return text.to_string();
+    }
+    if width == 0 {
+        return String::new();
+    }
+    if width == 1 {
+        return "…".to_string();
+    }
+    let mut kept = String::new();
+    let mut kept_width = 0;
+    for token in text.chars() {
+        let token_width = Span::raw(token.to_string()).width();
+        if kept_width + token_width + 1 > width {
+            break;
+        }
+        kept.push(token);
+        kept_width += token_width;
+    }
+    kept + "…"
+}
+
+fn short_peer_id(peer_id: &str) -> String {
+    truncate_to_display_width(peer_id, 8)
+}
+
+fn peer_display_name(peer_id: &str, label: &Option<String>) -> String {
+    match label.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => truncate_to_display_width(name, 16),
+        None => short_peer_id(peer_id),
+    }
+}
+
+pub(in crate::output) fn tui_peer_list_summary(state: &DashboardState) -> String {
+    if state.peer_ids.is_empty() {
+        return "0".to_string();
+    }
+    let names: Vec<String> = state
+        .peer_ids
+        .iter()
+        .take(3)
+        .map(|(id, label)| peer_display_name(id, label))
+        .collect();
+    let mut summary = format!("{} ({})", state.peer_ids.len(), names.join(", "));
+    if state.peer_ids.len() > 3 {
+        summary.push_str(", …");
+    }
+    if Span::raw(&summary).width() > STATUS_PEER_SUMMARY_MAX_WIDTH {
+        summary = truncate_to_display_width(&summary, STATUS_PEER_SUMMARY_MAX_WIDTH);
+    }
+    summary
+}
+
+pub(in crate::output) fn should_show_status_resource_metrics(width: u16) -> bool {
+    width >= STATUS_RESOURCE_METRICS_MIN_WIDTH
+}
+
+fn format_bytes_gb(bytes: u64) -> String {
+    format!("{:.1}GB", bytes as f64 / 1e9)
+}
+
+pub(in crate::output) fn tui_memory_summary(state: &DashboardState) -> Option<String> {
+    let total = state.system_memory_total_bytes?;
+    if total == 0 {
+        return None;
+    }
+    match state.system_memory_available_bytes {
+        Some(available) => Some(format!(
+            "{}/{}",
+            format_bytes_gb(total.saturating_sub(available)),
+            format_bytes_gb(total)
+        )),
+        None => Some(format_bytes_gb(total)),
+    }
+}
+
+pub(in crate::output) fn tui_disk_summary(state: &DashboardState) -> Option<String> {
+    let total = state.system_disk_total_bytes?;
+    if total == 0 {
+        return None;
+    }
+    match state.system_disk_available_bytes {
+        Some(available) => Some(format!(
+            "{}/{}",
+            format_bytes_gb(total.saturating_sub(available)),
+            format_bytes_gb(total)
+        )),
+        None => Some(format_bytes_gb(total)),
+    }
 }
 
 pub(in crate::output) fn status_separator_span() -> Span<'static> {

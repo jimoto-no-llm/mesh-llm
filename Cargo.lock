@@ -4800,6 +4800,7 @@ dependencies = [
  "skippy-topology",
  "socket2",
  "subtle",
+ "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",

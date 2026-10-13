@@ -142,6 +142,11 @@ pub struct DashboardSnapshot {
     pub current_inflight_requests: u64,
     pub accepted_request_buckets: Vec<DashboardAcceptedRequestBucket>,
     pub latency_samples_ms: Vec<u64>,
+    pub system_memory_total_bytes: Option<u64>,
+    pub system_memory_available_bytes: Option<u64>,
+    pub system_disk_path: Option<String>,
+    pub system_disk_total_bytes: Option<u64>,
+    pub system_disk_available_bytes: Option<u64>,
 }
 
 impl Default for DashboardSnapshot {
@@ -158,6 +163,11 @@ impl Default for DashboardSnapshot {
                 })
                 .collect(),
             latency_samples_ms: Vec::new(),
+            system_memory_total_bytes: None,
+            system_memory_available_bytes: None,
+            system_disk_path: None,
+            system_disk_total_bytes: None,
+            system_disk_available_bytes: None,
         }
     }
 }

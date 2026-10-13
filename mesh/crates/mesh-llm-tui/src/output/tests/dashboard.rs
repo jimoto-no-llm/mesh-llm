@@ -1486,3 +1486,60 @@ pub(super) fn dashboard_header_always_reports_whether_a_strategy_is_in_force() {
         "{rendered}"
     );
 }
+
+#[test]
+pub(super) fn apply_snapshot_normalizes_zero_resource_totals_to_none() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(0),
+        system_memory_available_bytes: Some(123),
+        system_disk_path: Some(String::from("/data")),
+        system_disk_total_bytes: Some(0),
+        system_disk_available_bytes: Some(456),
+        ..snapshot_fixture(0, 30)
+    }));
+
+    assert_eq!(state.system_memory_total_bytes, None);
+    assert_eq!(state.system_memory_available_bytes, None);
+    assert_eq!(state.system_disk_total_bytes, None);
+    assert_eq!(state.system_disk_available_bytes, None);
+    assert_eq!(state.system_disk_path, None);
+
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(16_000_000_000),
+        system_memory_available_bytes: Some(4_000_000_000),
+        system_disk_path: Some(String::from("/")),
+        system_disk_total_bytes: Some(500_000_000_000),
+        system_disk_available_bytes: Some(200_000_000_000),
+        ..snapshot_fixture(0, 30)
+    }));
+
+    assert_eq!(state.system_memory_total_bytes, Some(16_000_000_000));
+    assert_eq!(state.system_memory_available_bytes, Some(4_000_000_000));
+    assert_eq!(state.system_disk_total_bytes, Some(500_000_000_000));
+    assert_eq!(state.system_disk_path, Some(String::from("/")));
+}
+
+#[test]
+pub(super) fn peer_joined_blank_label_normalizes_to_none() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+        peer_id: String::from("peer-blank"),
+        label: Some(String::from("   ")),
+    }));
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+        peer_id: String::from("peer-empty"),
+        label: Some(String::new()),
+    }));
+    state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+        peer_id: String::from("peer-padded"),
+        label: Some(String::from("  alice  ")),
+    }));
+
+    assert_eq!(state.peer_ids.get("peer-blank"), Some(&None));
+    assert_eq!(state.peer_ids.get("peer-empty"), Some(&None));
+    assert_eq!(
+        state.peer_ids.get("peer-padded"),
+        Some(&Some(String::from("alice")))
+    );
+}
