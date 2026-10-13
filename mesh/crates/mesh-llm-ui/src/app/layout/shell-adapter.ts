@@ -12,6 +12,26 @@ export type TopNavShellData = {
 }
 
 const LOCAL_API_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0'])
+const LOOPBACK_CONSOLE_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]'])
+
+/**
+ * Mirrors the server's trusted-local disclosure closely enough for console
+ * hints: the live invite token only reaches loopback sessions. An unknown
+ * host (no `window`, e.g. SSR or a test) is treated as local so the neutral
+ * "not issued yet" wording is preserved.
+ */
+export function isLoopbackConsoleHost(hostname: string | undefined): boolean {
+  if (hostname === undefined) return true
+  const normalized = hostname.trim().toLowerCase()
+  if (normalized === '') return true
+  if (LOOPBACK_CONSOLE_HOSTS.has(normalized)) return true
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(normalized)
+}
+
+function currentConsoleHostname(): string | undefined {
+  if (typeof window === 'undefined') return undefined
+  return window.location.hostname
+}
 
 function normalizeOpenAIBaseUrl(value: string) {
   const trimmed = value.trim().replace(/\/+$/, '')
@@ -81,12 +101,20 @@ function buildPublicJoinCommands(): TopNavJoinCommand[] {
   ]
 }
 
-function buildUnavailableJoinCommands(): TopNavJoinCommand[] {
+function buildUnavailableJoinCommands(remoteSession: boolean): TopNavJoinCommand[] {
+  // A remote console never receives the token, so "not issued yet" would read
+  // as "wait here" and never resolve. Say what actually unblocks the operator.
+  const tokenHint = remoteSession
+    ? 'The live invite token is only disclosed to a trusted local session. Open this console on the machine running the node.'
+    : 'Live /api/status has not reported an invite token yet.'
+  const commandHint = remoteSession
+    ? 'Open the console on the machine running the node to read the live invite token.'
+    : 'This command becomes available after the backend issues a live invite token.'
   return [
     {
       label: 'Invite token',
       value: 'Invite token unavailable',
-      hint: 'Live /api/status has not reported an invite token yet.',
+      hint: tokenHint,
       noWrapValue: true,
       disabled: true
     },
@@ -94,14 +122,14 @@ function buildUnavailableJoinCommands(): TopNavJoinCommand[] {
       label: 'Auto join and serve command',
       value: 'Auto join command unavailable',
       prefix: '$',
-      hint: 'This command becomes available after the backend issues a live invite token.',
+      hint: commandHint,
       disabled: true
     },
     {
       label: 'Client-only join command',
       value: 'Client-only join command unavailable',
       prefix: '$',
-      hint: 'This command becomes available after the backend issues a live invite token.',
+      hint: commandHint,
       disabled: true
     }
   ]
@@ -116,14 +144,17 @@ export function resolveHarnessTopNavData(data: ShellHarnessData): TopNavShellDat
   }
 }
 
-export function resolveLiveTopNavData(status?: StatusPayload): TopNavShellData {
+export function resolveLiveTopNavData(
+  status?: StatusPayload,
+  hostname: string | undefined = currentConsoleHostname()
+): TopNavShellData {
   const inviteToken = resolveInviteToken(status)
   const topNavJoinCommands =
     status && isPublicMesh(status)
       ? buildPublicJoinCommands()
       : inviteToken
         ? buildAvailableJoinCommands(inviteToken)
-        : buildUnavailableJoinCommands()
+        : buildUnavailableJoinCommands(!isLoopbackConsoleHost(hostname))
 
   return {
     apiUrl: resolveOpenAIBaseUrl(status),
