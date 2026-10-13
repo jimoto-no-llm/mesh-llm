@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 /// of the upstream tool-call indexes used to fold argument fragments.
 #[derive(Clone, Copy)]
 enum OutputSlot {
+    Reasoning,
     Message,
     ToolCall(u64),
 }
@@ -49,6 +50,8 @@ struct ResponsesStreamRelayState {
     sequence_number: i32,
     created_emitted: bool,
     text_output_index: Option<i32>,
+    reasoning_output_index: Option<i32>,
+    reasoning_text: String,
     slots: Vec<OutputSlot>,
     tool_calls: BTreeMap<u64, StreamedResponsesToolCall>,
     pending_reasoning: Vec<String>,
@@ -73,6 +76,8 @@ impl ResponsesStreamRelayState {
             sequence_number: 0,
             created_emitted: false,
             text_output_index: None,
+            reasoning_output_index: None,
+            reasoning_text: String::new(),
             slots: Vec::new(),
             tool_calls: BTreeMap::new(),
             pending_reasoning: Vec::new(),
@@ -89,6 +94,10 @@ impl ResponsesStreamRelayState {
         let output_index = self.slots.len() as i32;
         self.slots.push(slot);
         output_index
+    }
+
+    fn reasoning_item_id(&self) -> String {
+        format!("rs_{}", self.created_at)
     }
 
     fn tool_item_id(&self, index: u64) -> String {
@@ -302,9 +311,9 @@ async fn process_translated_responses_frame(
     update_translated_responses_model(state, &chunk);
     emit_translated_response_created(tcp_stream, capture, state, false).await?;
     queue_translated_reasoning_delta(tcp_stream, capture, state, &chunk).await?;
+    flush_translated_reasoning_deltas(tcp_stream, capture, state).await?;
     emit_translated_output_delta(tcp_stream, capture, state, &chunk).await?;
     emit_translated_tool_deltas(tcp_stream, capture, state, &chunk).await?;
-    flush_translated_reasoning_deltas(tcp_stream, capture, state).await?;
     update_translated_responses_usage(state, &chunk);
     Ok(())
 }
@@ -341,9 +350,8 @@ async fn emit_translated_response_created(
     Ok(())
 }
 
-// Reasoning can arrive before the first text/tool item. Keep each fragment
-// until an item is added so a tool-only response never references a phantom
-// msg_* item or needs an empty assistant message.
+// Reasoning streams live on its own reasoning item, so a tool-only response
+// never needs an empty assistant message to carry it.
 async fn queue_translated_reasoning_delta(
     tcp_stream: &mut ClientStream,
     capture: &mut Option<OpenAiStreamArtifactCapture>,
@@ -391,33 +399,47 @@ async fn flush_translated_reasoning_deltas(
     capture: &mut Option<OpenAiStreamArtifactCapture>,
     state: &mut ResponsesStreamRelayState,
 ) -> Result<()> {
-    if state.slots.is_empty() {
-        // Reasoning arrived before any item: open the message item first so
-        // the deltas reference a real item, then deliver immediately so long
-        // thinking streams live instead of waiting for text or tool calls.
-        if state.pending_reasoning.is_empty() {
-            return Ok(());
-        }
-        emit_translated_text_prelude(tcp_stream, capture, state).await?;
-    }
-    let Some(first_slot) = state.slots.first().copied() else {
+    if state.pending_reasoning.is_empty() {
         return Ok(());
-    };
-    let item_id = match first_slot {
-        OutputSlot::Message => state.item_id.clone(),
-        OutputSlot::ToolCall(index) => state.tool_item_id(index),
-    };
+    }
+    let output_index = emit_translated_reasoning_prelude(tcp_stream, capture, state).await?;
+    let item_id = state.reasoning_item_id();
     state.pending_reasoning_bytes = 0;
     for delta in std::mem::take(&mut state.pending_reasoning) {
+        state.reasoning_text.push_str(&delta);
         let sequence_number = state.next_sequence_number();
-        let event = response_adapter::responses_stream_reasoning_delta_event_with_sequence(
-            &item_id,
-            &delta,
-            sequence_number,
+        let event = with_output_index(
+            response_adapter::responses_stream_reasoning_delta_event_with_sequence(
+                &item_id,
+                &delta,
+                sequence_number,
+            ),
+            output_index,
         );
         emit_translated_event(tcp_stream, capture, "response.reasoning_text.delta", event).await?;
     }
     Ok(())
+}
+
+async fn emit_translated_reasoning_prelude(
+    tcp_stream: &mut ClientStream,
+    capture: &mut Option<OpenAiStreamArtifactCapture>,
+    state: &mut ResponsesStreamRelayState,
+) -> Result<i32> {
+    if let Some(output_index) = state.reasoning_output_index {
+        return Ok(output_index);
+    }
+    let output_index = state.reserve_slot(OutputSlot::Reasoning);
+    state.reasoning_output_index = Some(output_index);
+    let sequence_number = state.next_sequence_number();
+    let added = serde_json::json!({
+        "type": "response.output_item.added",
+        "sequence_number": sequence_number,
+        "output_index": output_index,
+        "item": {"id": state.reasoning_item_id(), "type": "reasoning", "summary": []},
+    });
+    emit_translated_event(tcp_stream, capture, "response.output_item.added", added).await?;
+    Ok(output_index)
 }
 
 fn with_output_index(mut event: serde_json::Value, output_index: i32) -> serde_json::Value {
@@ -685,7 +707,7 @@ async fn finish_translated_responses_stream(
     state: &mut ResponsesStreamRelayState,
 ) -> Result<()> {
     emit_translated_response_created(tcp_stream, capture, state, true).await?;
-    if state.slots.is_empty() {
+    if state.text_output_index.is_none() && state.tool_calls.is_empty() {
         // Empty and reasoning-only completions retain the existing single
         // empty message; tool-only completions must not invent one.
         emit_translated_text_prelude(tcp_stream, capture, state).await?;
@@ -694,6 +716,9 @@ async fn finish_translated_responses_stream(
     let mut output = Vec::with_capacity(state.slots.len());
     for slot in state.slots.clone() {
         let item = match slot {
+            OutputSlot::Reasoning => {
+                finalize_translated_reasoning(tcp_stream, capture, state).await?
+            }
             OutputSlot::Message => finalize_translated_text(tcp_stream, capture, state).await?,
             OutputSlot::ToolCall(index) => {
                 finalize_translated_tool(tcp_stream, capture, state, index).await?
@@ -753,6 +778,48 @@ async fn finalize_translated_text(
         output_index,
     );
     let item = item_done["item"].clone();
+    emit_translated_event(tcp_stream, capture, "response.output_item.done", item_done).await?;
+    Ok(item)
+}
+
+async fn finalize_translated_reasoning(
+    tcp_stream: &mut ClientStream,
+    capture: &mut Option<OpenAiStreamArtifactCapture>,
+    state: &mut ResponsesStreamRelayState,
+) -> Result<serde_json::Value> {
+    let output_index = state
+        .reasoning_output_index
+        .expect("reasoning slot reserved");
+    let item_id = state.reasoning_item_id();
+    let sequence_number = state.next_sequence_number();
+    let text_done = serde_json::json!({
+        "type": "response.reasoning_text.done",
+        "sequence_number": sequence_number,
+        "item_id": item_id,
+        "output_index": output_index,
+        "content_index": 0,
+        "text": state.reasoning_text,
+    });
+    emit_translated_event(
+        tcp_stream,
+        capture,
+        "response.reasoning_text.done",
+        text_done,
+    )
+    .await?;
+    let item = serde_json::json!({
+        "id": item_id,
+        "type": "reasoning",
+        "summary": [],
+        "content": [{"type": "reasoning_text", "text": state.reasoning_text}],
+    });
+    let sequence_number = state.next_sequence_number();
+    let item_done = serde_json::json!({
+        "type": "response.output_item.done",
+        "sequence_number": sequence_number,
+        "output_index": output_index,
+        "item": item,
+    });
     emit_translated_event(tcp_stream, capture, "response.output_item.done", item_done).await?;
     Ok(item)
 }

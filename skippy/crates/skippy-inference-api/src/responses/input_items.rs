@@ -36,6 +36,9 @@ enum InputItemKind {
     FunctionCall,
     /// A `function_call_output` item: the result of an earlier tool call.
     FunctionCallOutput,
+    /// A `reasoning` item echoed back from an earlier response. Chat messages
+    /// have no place for it, so it is skipped.
+    Reasoning,
     /// A message content block (`input_text`, `input_image`, ...).
     ContentBlock,
     /// A `type` this layer does not translate. Rejected, never dropped.
@@ -74,6 +77,7 @@ fn input_item_kind(item: &Value) -> InputItemKind {
             "message" => InputItemKind::Message,
             "function_call" => InputItemKind::FunctionCall,
             "function_call_output" => InputItemKind::FunctionCallOutput,
+            "reasoning" => InputItemKind::Reasoning,
             content_type if CONTENT_BLOCK_TYPES.contains(&content_type) => {
                 InputItemKind::ContentBlock
             }
@@ -90,7 +94,10 @@ fn input_item_kind(item: &Value) -> InputItemKind {
 fn is_input_item(item: &Value) -> bool {
     matches!(
         input_item_kind(item),
-        InputItemKind::Message | InputItemKind::FunctionCall | InputItemKind::FunctionCallOutput
+        InputItemKind::Message
+            | InputItemKind::FunctionCall
+            | InputItemKind::FunctionCallOutput
+            | InputItemKind::Reasoning
     )
 }
 
@@ -191,6 +198,7 @@ fn translate_responses_input_items(items: &[Value]) -> Result<Vec<Value>, Infere
                 flush_tool_calls(&mut pending_calls, &mut messages);
                 messages.push(function_call_output_message(item)?);
             }
+            InputItemKind::Reasoning => {}
             InputItemKind::ContentBlock | InputItemKind::Unsupported => {
                 return Err(unsupported_input_item(item));
             }
@@ -359,6 +367,7 @@ fn translate_responses_input_value(item: &Value) -> Result<Vec<Value>, Inference
             "tool_calls": [function_call_tool_call(item)?],
         })]),
         InputItemKind::FunctionCallOutput => Ok(vec![function_call_output_message(item)?]),
+        InputItemKind::Reasoning => Ok(Vec::new()),
         InputItemKind::ContentBlock => {
             let content = translate_responses_message_content(item)?;
             Ok(vec![serde_json::json!({
@@ -605,6 +614,24 @@ mod tests {
         request
             .validate()
             .expect("normalized chat request is valid");
+    }
+
+    #[test]
+    fn echoed_reasoning_items_are_skipped() {
+        let input = serde_json::json!([
+            {"type": "message", "role": "user", "content": "weather"},
+            {"type": "reasoning", "id": "rs_1", "summary": [],
+                "content": [{"type": "reasoning_text", "text": "plan"}]},
+            {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": "{}"},
+            {"type": "function_call_output", "call_id": "call_1", "output": "sunny"}
+        ]);
+
+        let messages = translate_responses_input_to_messages(&input)
+            .expect("reasoning items from an earlier response are accepted");
+
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(messages[2]["tool_call_id"], "call_1");
     }
 
     #[test]

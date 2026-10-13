@@ -147,14 +147,14 @@ async fn interleaved_tool_calls_keep_first_appearance_order_and_latest_identity(
             .iter()
             .map(|event| event["item"]["type"].as_str().unwrap())
             .collect::<Vec<_>>(),
-        ["function_call", "function_call", "message"]
+        ["reasoning", "function_call", "function_call", "message"]
     );
     assert_eq!(
         added
             .iter()
             .map(|event| event["output_index"].as_i64().unwrap())
             .collect::<Vec<_>>(),
-        [0, 1, 2]
+        [0, 1, 2, 3]
     );
     let deltas = events_of_type(&events, "response.function_call_arguments.delta");
     assert_eq!(
@@ -162,19 +162,21 @@ async fn interleaved_tool_calls_keep_first_appearance_order_and_latest_identity(
             .iter()
             .map(|event| event["output_index"].as_i64().unwrap())
             .collect::<Vec<_>>(),
-        [0, 1, 0, 1]
+        [1, 2, 1, 2]
     );
     let completed = events_of_type(&events, "response.completed")[0];
     let output = completed["response"]["output"].as_array().unwrap();
+    assert_eq!(output[0]["type"], "reasoning");
+    assert_eq!(output[0]["content"][0]["text"], "think");
     assert_eq!(
-        output[0]["id"],
+        output[1]["id"],
         format!("fc_{}_7", completed["response"]["created_at"])
     );
-    assert_eq!(output[0]["call_id"], "call_latest");
-    assert_eq!(output[0]["name"], "weather");
-    assert_eq!(output[0]["arguments"], r#"{"city":"Paris"}"#);
-    assert_eq!(output[1]["arguments"], r#"{"unit":"C"}"#);
-    assert_eq!(output[2]["content"][0]["text"], "Hi");
+    assert_eq!(output[1]["call_id"], "call_latest");
+    assert_eq!(output[1]["name"], "weather");
+    assert_eq!(output[1]["arguments"], r#"{"city":"Paris"}"#);
+    assert_eq!(output[2]["arguments"], r#"{"unit":"C"}"#);
+    assert_eq!(output[3]["content"][0]["text"], "Hi");
     assert_eq!(completed["response"]["output_text"], "Hi");
     assert_eq!(
         completed["response"]["usage"]["input_tokens_details"]["cached_tokens"],
@@ -193,7 +195,7 @@ async fn interleaved_tool_calls_keep_first_appearance_order_and_latest_identity(
             .iter()
             .map(|event| event["output_index"].as_i64().unwrap())
             .collect::<Vec<_>>(),
-        [0, 1, 2]
+        [0, 1, 2, 3]
     );
     assert_eq!(
         events_of_type(&events, "response.reasoning_text.delta")[0]["item_id"],
@@ -201,7 +203,7 @@ async fn interleaved_tool_calls_keep_first_appearance_order_and_latest_identity(
     );
     assert_eq!(
         events_of_type(&events, "response.output_text.delta")[0]["output_index"],
-        2
+        3
     );
     for (index, event) in events.iter().enumerate() {
         assert_eq!(event["sequence_number"], (index + 1) as i32);
@@ -234,11 +236,12 @@ async fn tool_only_reasoning_stream_has_no_phantom_message_and_matches_buffered_
     assert!(events_of_type(&events, "response.content_part.added").is_empty());
     let completed = events_of_type(&events, "response.completed")[0];
     let output = completed["response"]["output"].as_array().unwrap();
-    assert_eq!(output.len(), 1);
-    assert_eq!(output[0]["type"], "function_call");
-    assert_eq!(output[0]["arguments"], "{}");
-    assert_eq!(output[0]["call_id"], "call_final");
-    assert_eq!(output[0]["name"], "lookup");
+    assert_eq!(output.len(), 2);
+    assert_eq!(output[0]["type"], "reasoning");
+    assert_eq!(output[1]["type"], "function_call");
+    assert_eq!(output[1]["arguments"], "{}");
+    assert_eq!(output[1]["call_id"], "call_final");
+    assert_eq!(output[1]["name"], "lookup");
     assert_eq!(
         events_of_type(&events, "response.reasoning_text.delta")[0]["item_id"],
         output[0]["id"]
@@ -253,7 +256,7 @@ async fn tool_only_reasoning_stream_has_no_phantom_message_and_matches_buffered_
     .unwrap();
     let buffered: Value = serde_json::from_slice(&buffered).unwrap();
     for key in ["type", "call_id", "name", "arguments"] {
-        assert_eq!(output[0][key], buffered["output"][0][key]);
+        assert_eq!(output[1][key], buffered["output"][0][key]);
     }
 }
 
@@ -401,8 +404,8 @@ async fn tool_call_arguments_are_bounded_and_rejected_explicitly() {
 #[tokio::test]
 async fn reasoning_dribble_without_items_streams_live() {
     // Reasoning arrives before any output slot opens; deltas flush live
-    // through an opened message item instead of accumulating, so memory
-    // stays bounded by one fragment and the cap is never reached.
+    // through the reasoning item instead of accumulating, so the buffered
+    // cap is never reached.
     let dribble = "r".repeat(1024);
     let frames: Vec<Value> = (0..=(MAX_BUFFERED_REASONING_BYTES / 1024))
         .map(|_| {
@@ -416,12 +419,13 @@ async fn reasoning_dribble_without_items_streams_live() {
     let reasoning = events_of_type(&events, "response.reasoning_text.delta");
     assert_eq!(reasoning.len(), 1025);
     let added = events_of_type(&events, "response.output_item.added");
-    assert_eq!(added.len(), 1);
-    assert_eq!(added[0]["item"]["type"], "message");
+    assert_eq!(added.len(), 2);
+    assert_eq!(added[0]["item"]["type"], "reasoning");
+    assert_eq!(added[1]["item"]["type"], "message");
 }
 
 #[tokio::test]
-async fn reasoning_only_stream_opens_message_item_live() {
+async fn reasoning_only_stream_opens_reasoning_item_live() {
     let (result, events) = relay_frames(vec![
         json!({"model":"qwen","choices":[{"delta":{"reasoning_content":"step one"}}]}),
         json!({"model":"qwen","choices":[{"delta":{"reasoning_content":"step two"}}]}),
@@ -434,7 +438,7 @@ async fn reasoning_only_stream_opens_message_item_live() {
     let added_position = events
         .iter()
         .position(|event| event["type"] == "response.output_item.added")
-        .expect("message item must open");
+        .expect("reasoning item must open");
     let first_reasoning_position = events
         .iter()
         .position(|event| event["type"] == "response.reasoning_text.delta")
@@ -444,9 +448,44 @@ async fn reasoning_only_stream_opens_message_item_live() {
         "item must open before the first reasoning delta"
     );
     let added = events_of_type(&events, "response.output_item.added");
-    assert_eq!(added[0]["item"]["type"], "message");
+    assert_eq!(added[0]["item"]["type"], "reasoning");
     assert_eq!(reasoning[0]["item_id"], added[0]["item"]["id"]);
     assert_eq!(reasoning[1]["item_id"], added[0]["item"]["id"]);
+}
+
+#[tokio::test]
+async fn reasoning_before_tool_call_in_separate_frames_adds_no_message() {
+    let (result, events) = relay_frames(vec![
+        json!({"model":"qwen","choices":[{"index":0,"delta":{"reasoning_content":"plan"}}]}),
+        json!({"model":"qwen","choices":[{"index":0,"delta":{"tool_calls":[
+            {"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{}"}}
+        ]}}]}),
+        json!({"model":"qwen","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}),
+    ])
+    .await;
+    assert!(matches!(result, RouteAttemptResult::Delivered { .. }));
+    let added = events_of_type(&events, "response.output_item.added");
+    assert_eq!(
+        added
+            .iter()
+            .map(|event| event["item"]["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["reasoning", "function_call"]
+    );
+    let completed = events_of_type(&events, "response.completed")[0];
+    let output = completed["response"]["output"].as_array().unwrap();
+    assert_eq!(
+        output
+            .iter()
+            .map(|item| item["type"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        ["reasoning", "function_call"]
+    );
+    assert_eq!(output[0]["content"][0]["text"], "plan");
+    assert_eq!(
+        events_of_type(&events, "response.reasoning_text.delta")[0]["item_id"],
+        output[0]["id"]
+    );
 }
 
 #[tokio::test]
