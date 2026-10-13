@@ -161,31 +161,41 @@ pub(super) enum TuiEventRow<'a> {
     Padding,
 }
 
-pub(in crate::output) const STATUS_PEER_NAMES_MIN_WIDTH: u16 = 100;
-pub(in crate::output) const STATUS_RESOURCE_METRICS_MIN_WIDTH: u16 = 140;
-pub(in crate::output) const STATUS_FULL_HINTS_MIN_WIDTH: u16 = 200;
-pub(in crate::output) const STATUS_REDUCED_HINTS_MIN_WIDTH: u16 = 160;
-pub(in crate::output) const STATUS_SHORT_HINTS_MIN_WIDTH: u16 = 100;
 pub(in crate::output) const STATUS_PEER_SUMMARY_MAX_WIDTH: usize = 40;
+
+#[derive(Clone, Copy)]
+enum StatusHints {
+    Full,
+    Reduced,
+    Short,
+    Quit,
+}
+
+/// Status bar detail levels, richest first: (hints, peer names, resource
+/// metrics, model/process counts). Each level drops one more item, so a
+/// wider terminal never shows less. Uptime, the peer count, and the clock
+/// are always kept.
+const STATUS_LEVELS: [(StatusHints, bool, bool, bool); 7] = [
+    (StatusHints::Full, true, true, true),
+    (StatusHints::Reduced, true, true, true),
+    (StatusHints::Short, true, true, true),
+    (StatusHints::Short, true, false, true),
+    (StatusHints::Short, false, false, true),
+    (StatusHints::Short, false, false, false),
+    (StatusHints::Quit, false, false, false),
+];
 
 pub(in crate::output) type TuiTerminal = Terminal<CrosstermBackend<TerminalOut>>;
 pub(in crate::output) fn dashboard_status_line(
     state: &DashboardState,
     width: u16,
 ) -> Line<'static> {
-    let mut spans = status_left_spans(state, width);
-    let full_names = width >= STATUS_PEER_NAMES_MIN_WIDTH;
-    let full_resources = should_show_status_resource_metrics(width);
-    // Degrade from full detail toward the essentials so the line never
-    // overflows: peer names, resource metrics, then model/process counts.
-    // Uptime and the clock always survive.
+    // Use the richest level that fits; the last level is kept even if it
+    // still overflows a very narrow terminal.
+    let mut spans = Vec::new();
     let mut right_spans = Vec::new();
-    for (peer_names, with_resources, with_counts) in [
-        (full_names, full_resources, true),
-        (false, full_resources, true),
-        (false, false, true),
-        (false, false, false),
-    ] {
+    for (hints, peer_names, with_resources, with_counts) in STATUS_LEVELS {
+        spans = status_left_spans(state, hints);
         right_spans = build_status_right_spans(state, peer_names, with_resources, with_counts);
         if status_spans_width(&spans) + 1 + status_spans_width(&right_spans) <= usize::from(width) {
             break;
@@ -201,18 +211,15 @@ pub(in crate::output) fn dashboard_status_line(
     Line::from(spans)
 }
 
-pub(in crate::output) fn status_left_spans(
-    state: &DashboardState,
-    width: u16,
-) -> Vec<Span<'static>> {
+fn status_left_spans(state: &DashboardState, hints: StatusHints) -> Vec<Span<'static>> {
     let readiness = readiness_label(state);
     let mut left_spans = vec![Span::styled(
         readiness_badge(readiness),
         readiness_badge_style(readiness),
     )];
     left_spans.push(Span::raw(" "));
-    let hints: &[(&str, &str)] = if width >= STATUS_FULL_HINTS_MIN_WIDTH {
-        &[
+    let hints: &[(&str, &str)] = match hints {
+        StatusHints::Full => &[
             ("Q", "Quit"),
             ("Tab", "Next"),
             ("Enter/Z", "Full"),
@@ -221,20 +228,17 @@ pub(in crate::output) fn status_left_spans(
             ("/", "Filter"),
             ("F", "Follow"),
             ("R", "Refresh"),
-        ]
-    } else if width >= STATUS_REDUCED_HINTS_MIN_WIDTH {
-        &[
+        ],
+        StatusHints::Reduced => &[
             ("Q", "Quit"),
             ("Tab", "Next"),
             ("Enter/Z", "Full"),
             ("↑/↓", "Window"),
             ("F", "Follow"),
             ("R", "Refresh"),
-        ]
-    } else if width >= STATUS_SHORT_HINTS_MIN_WIDTH {
-        &[("Q", "Quit"), ("R", "Refresh")]
-    } else {
-        &[("Q", "Quit")]
+        ],
+        StatusHints::Short => &[("Q", "Quit"), ("R", "Refresh")],
+        StatusHints::Quit => &[("Q", "Quit")],
     };
     for (key, label) in hints {
         push_status_key_hint(&mut left_spans, key, label);
@@ -362,10 +366,6 @@ pub(in crate::output) fn tui_peer_list_summary(state: &DashboardState) -> String
         summary = truncate_to_display_width(&summary, STATUS_PEER_SUMMARY_MAX_WIDTH);
     }
     summary
-}
-
-pub(in crate::output) fn should_show_status_resource_metrics(width: u16) -> bool {
-    width >= STATUS_RESOURCE_METRICS_MIN_WIDTH
 }
 
 fn format_bytes_gb(bytes: u64) -> String {

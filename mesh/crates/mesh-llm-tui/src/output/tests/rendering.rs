@@ -1953,7 +1953,6 @@ pub(super) fn status_peer_summary_at_narrow_width_shows_count_only() {
         }));
     }
 
-    assert!(!should_show_status_resource_metrics(60));
     let text = spans_plain_text(&dashboard_status_line(&state, 60).spans);
     assert!(text.contains("peers: 2"), "expected peer count in {text}");
     assert!(
@@ -1987,7 +1986,6 @@ pub(super) fn status_peer_summary_at_medium_width_shows_names_without_metrics() 
         summary.contains("alice"),
         "120 cols must show names: {summary}"
     );
-    assert!(!should_show_status_resource_metrics(120));
     let text = spans_plain_text(&dashboard_status_line(&state, 120).spans);
     assert!(text.contains("alice"), "expected peer names in {text}");
     assert!(!text.contains("mem:"), "120 cols must omit memory: {text}");
@@ -2012,7 +2010,6 @@ pub(super) fn status_resource_metrics_appear_at_wide_width() {
         }));
     }
 
-    assert!(should_show_status_resource_metrics(240));
     let text = spans_plain_text(&dashboard_status_line(&state, 240).spans);
     assert!(text.contains("alice"), "expected peer names in {text}");
     assert!(text.contains("mem:"), "240 cols must show memory: {text}");
@@ -2101,6 +2098,55 @@ pub(super) fn status_line_never_overflows_terminal_width() {
             text.contains("peers:"),
             "peers must survive at {width}: {text}"
         );
+    }
+}
+
+#[test]
+pub(super) fn status_line_detail_never_drops_as_width_grows() {
+    let mut state = DashboardState::default();
+    state.reduce(DashboardAction::SnapshotUpdated(DashboardSnapshot {
+        system_memory_total_bytes: Some(16_000_000_000),
+        system_memory_available_bytes: Some(4_000_000_000),
+        system_disk_path: Some(String::from("/")),
+        system_disk_total_bytes: Some(500_000_000_000),
+        system_disk_available_bytes: Some(200_000_000_000),
+        ..snapshot_fixture(0, 30)
+    }));
+    for (peer_id, label) in [
+        ("peer-aaaabbbbcccc", "alice"),
+        ("peer-ddddeeeeffff", "bob"),
+        ("peer-ccccddddeeee", "あいうえおかきくけこさしすせそ"),
+    ] {
+        state.reduce(DashboardAction::OutputEvent(OutputEvent::PeerJoined {
+            peer_id: peer_id.to_string(),
+            label: Some(label.to_string()),
+        }));
+    }
+    let items = [
+        "alice", "mem:", "disk:", "models:", "Refresh", "Tab", "Filter",
+    ];
+
+    let mut previous: Option<(u16, String)> = None;
+    for width in 40u16..=260 {
+        let text = spans_plain_text(&dashboard_status_line(&state, width).spans);
+        if let Some((previous_width, previous_text)) = &previous {
+            for item in items {
+                assert!(
+                    !previous_text.contains(item) || text.contains(item),
+                    "{item} shown at {previous_width} cols but dropped at {width}: {text}"
+                );
+            }
+        }
+        previous = Some((width, text));
+    }
+    for width in [200u16, 240] {
+        let text = spans_plain_text(&dashboard_status_line(&state, width).spans);
+        for item in ["alice", "mem:", "disk:"] {
+            assert!(
+                text.contains(item),
+                "{item} must show at {width} cols: {text}"
+            );
+        }
     }
 }
 

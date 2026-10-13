@@ -319,15 +319,15 @@ impl DashboardSnapshotProvider for RuntimeDashboardSnapshotProvider {
             }
             sort_dashboard_endpoint_rows(&mut webserver_rows);
 
-            let sampler = self.system_resources.clone();
-            let system_resources =
-                match tokio::task::spawn_blocking(move || sampler.sample_blocking()).await {
-                    Ok(sample) => sample,
-                    Err(err) => {
-                        tracing::warn!("dashboard system resources snapshot failed: {err}");
-                        None
-                    }
-                };
+            if self.system_resources.try_begin_refresh() {
+                let sampler = self.system_resources.clone();
+                // Detached: the snapshot reads the previous sample until this
+                // refresh publishes, so a slow disk never stalls the TUI.
+                drop(tokio::task::spawn_blocking(move || {
+                    sampler.refresh_blocking();
+                }));
+            }
+            let system_resources = self.system_resources.latest();
             DashboardSnapshot {
                 system_memory_total_bytes: system_resources
                     .as_ref()
