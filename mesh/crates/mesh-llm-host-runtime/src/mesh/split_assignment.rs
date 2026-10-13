@@ -20,12 +20,20 @@ pub(crate) fn publish_observed_stages(statuses: &[super::StageRuntimeStatus]) {
     }
 }
 
+static LAST: Mutex<Option<OutputEvent>> = Mutex::new(None);
+
 fn publish_split_assignment(event: OutputEvent) {
-    static LAST: Mutex<Option<OutputEvent>> = Mutex::new(None);
     let mut last = LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if last.as_ref() == Some(&event) {
         return;
     }
     *last = Some(event.clone());
     let _ = emit_event(event);
+}
+
+/// Clear the pinned assignment and forget the last one, so the next split is
+/// published again even if it looks the same.
+pub(crate) fn publish_split_assignment_cleared() {
+    *LAST.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    let _ = emit_event(OutputEvent::SplitAssignmentCleared);
 }

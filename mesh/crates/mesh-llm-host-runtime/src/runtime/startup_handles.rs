@@ -296,6 +296,8 @@ where
             }
             Err(err) => {
                 drop(startup_load_guard);
+                // No coordinator was elected or started this round.
+                node.clear_split_coordinator().await;
                 let fallback = CapacityFallback {
                     announced: announce_capacity_fallback,
                     model_name,
@@ -801,7 +803,7 @@ pub(super) async fn startup_launch_runtime(
     };
     match runtime_plan {
         StartupRuntimePlan::Split { reason } => {
-            startup_start_split_runtime_loop(StartupSplitRuntimeLoopParams {
+            let started = startup_start_split_runtime_loop(StartupSplitRuntimeLoopParams {
                 make_start_spec,
                 model_ref,
                 model_name,
@@ -819,7 +821,12 @@ pub(super) async fn startup_launch_runtime(
                 announce_capacity_fallback: reason == SplitRuntimeReason::LocalCapacity,
                 host_ram_offload_gain_bytes: node.host_ram_offload_gain_bytes,
             })
-            .await
+            .await;
+            if started.is_none() {
+                // The split loop ended without this node running the split.
+                node.clear_split_coordinator().await;
+            }
+            started
         }
         StartupRuntimePlan::Local => {
             startup_start_local_runtime_once(StartupLocalRuntimeOnceParams {

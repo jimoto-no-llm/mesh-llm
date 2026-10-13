@@ -300,13 +300,10 @@ impl OutputEventPresentation for OutputEvent {
             }
             OutputEvent::ServingStrategyResolved { .. } => serving_strategy_json_fields(self),
             OutputEvent::Info { message, context } => info_json_fields(message, context),
-            OutputEvent::SplitCoordinator { node_id, model } => {
-                json!({ "node_id": node_id, "model": model })
+            OutputEvent::SplitCoordinator { .. } | OutputEvent::SplitStages { .. } => {
+                Value::Object(projected_json_fields(self))
             }
-            OutputEvent::SplitStages {
-                coordinator_id,
-                summary,
-            } => json!({ "coordinator_id": coordinator_id, "summary": summary }),
+            OutputEvent::SplitAssignmentCleared => json!({}),
             OutputEvent::Startup { version, .. } => json!({ "version": version }),
             OutputEvent::LaunchPlan { plan } => json!({
                 "llama_process_count": plan.llama_process_rows.len(),

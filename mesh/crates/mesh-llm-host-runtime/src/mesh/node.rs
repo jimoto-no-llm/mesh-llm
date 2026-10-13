@@ -1310,7 +1310,9 @@ impl Node {
     /// split (stages withdrawn, model unloaded or switched). Without this the
     /// last observation lingers in API, Web and TUI surfaces.
     pub(crate) async fn clear_split_coordinator(&self) {
-        *self.split_coordinator.lock().await = None;
+        if self.split_coordinator.lock().await.take().is_some() {
+            super::split_assignment::publish_split_assignment_cleared();
+        }
     }
 
     #[cfg(test)]

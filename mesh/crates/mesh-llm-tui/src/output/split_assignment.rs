@@ -7,7 +7,7 @@ use mesh_llm_events::split_assignment::display_node_id;
 impl DashboardState {
     pub(super) fn note_split_assignment(&mut self, event: &OutputEvent) {
         match event {
-            OutputEvent::Startup { .. } => {
+            OutputEvent::Startup { .. } | OutputEvent::SplitAssignmentCleared => {
                 self.split_assignment = None;
                 self.split_coordinator_id = None;
             }
@@ -38,6 +38,22 @@ mod tests {
     use mesh_llm_events::split_assignment::{
         SplitAssignmentStage, split_coordinator_event, split_stages_event,
     };
+
+    #[test]
+    fn cleared_event_removes_the_pinned_assignment() {
+        let mut state = DashboardState::default();
+        state.reduce(DashboardAction::OutputEvent(split_coordinator_event(
+            "abcdef0123456789".into(),
+            "demo".into(),
+        )));
+        assert!(state.split_assignment.is_some());
+
+        state.reduce(DashboardAction::OutputEvent(
+            OutputEvent::SplitAssignmentCleared,
+        ));
+        assert_eq!(state.split_assignment, None);
+        assert_eq!(state.split_coordinator_id, None);
+    }
 
     #[test]
     fn producer_events_preserve_stages_and_follow_the_exact_coordinator() {

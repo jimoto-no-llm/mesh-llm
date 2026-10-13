@@ -444,6 +444,8 @@ pub enum OutputEvent {
         coordinator_id: Option<String>,
         summary: String,
     },
+    /// This node no longer takes part in a split; clear the pinned assignment.
+    SplitAssignmentCleared,
     Startup {
         version: String,
         message: Option<String>,
@@ -645,6 +647,7 @@ impl OutputEvent {
             OutputEvent::Info { .. } => "info",
             OutputEvent::SplitCoordinator { .. } => "split_coordinator",
             OutputEvent::SplitStages { .. } => "split_stages",
+            OutputEvent::SplitAssignmentCleared => "split_assignment_cleared",
             OutputEvent::Startup { .. } => "startup",
             OutputEvent::LaunchPlan { .. } => "launch_plan",
             OutputEvent::NodeIdentity { .. } => "node_identity",
@@ -732,6 +735,7 @@ impl OutputEvent {
                 split_assignment::display_node_id(node_id)
             ),
             OutputEvent::SplitStages { summary, .. } => format!("Split stages {summary}"),
+            OutputEvent::SplitAssignmentCleared => "Split assignment cleared".to_string(),
             OutputEvent::Startup { message, .. } => message
                 .clone()
                 .unwrap_or_else(|| "mesh-llm starting".to_string()),
