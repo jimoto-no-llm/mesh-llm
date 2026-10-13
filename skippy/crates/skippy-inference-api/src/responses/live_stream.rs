@@ -154,7 +154,7 @@ pub(crate) fn body_events(
 ) -> Vec<Event> {
     let mut state = state_machine
         .lock()
-        .expect("responses stream state lock poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if state.failed {
         return Vec::new();
     }
@@ -187,7 +187,7 @@ pub(crate) fn tail_events(
 ) -> Vec<Event> {
     let mut state = state_machine
         .lock()
-        .expect("responses stream state lock poisoned");
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut out = Vec::new();
     if state.failed {
         return out;

@@ -34,6 +34,7 @@ struct StreamedResponsesToolCall {
     name: Option<String>,
     arguments: String,
     output_index: i32,
+    added_emitted: bool,
 }
 
 struct ResponsesStreamRelayState {
@@ -390,6 +391,15 @@ async fn flush_translated_reasoning_deltas(
     capture: &mut Option<OpenAiStreamArtifactCapture>,
     state: &mut ResponsesStreamRelayState,
 ) -> Result<()> {
+    if state.slots.is_empty() {
+        // Reasoning arrived before any item: open the message item first so
+        // the deltas reference a real item, then deliver immediately so long
+        // thinking streams live instead of waiting for text or tool calls.
+        if state.pending_reasoning.is_empty() {
+            return Ok(());
+        }
+        emit_translated_text_prelude(tcp_stream, capture, state).await?;
+    }
     let Some(first_slot) = state.slots.first().copied() else {
         return Ok(());
     };
@@ -592,10 +602,28 @@ async fn fold_translated_tool_delta(
     }
     call.arguments.push_str(arguments);
     let output_index = call.output_index;
+    let identity_ready = call.call_id.is_some() && call.name.is_some();
+    let already_announced = call.added_emitted;
+    // When the identity completes on this fragment, deliver everything
+    // folded so far as one delta so no argument is lost.
+    let held_arguments = if already_announced {
+        None
+    } else {
+        call.added_emitted = identity_ready;
+        identity_ready.then(|| call.arguments.clone())
+    };
     let item_id = state.tool_item_id(index);
-    if opened_here {
-        // Arguments may already be flowing in this fragment, but the added
-        // item starts empty; its done item carries the final folded arguments.
+    // Hold the added event (and argument deltas) until the upstream names
+    // the call. Emitting provisional ids breaks client tracking when the
+    // real id/name arrive later in done/completed.
+    if !already_announced && !identity_ready {
+        // Still deliver any pending reasoning live.
+        flush_translated_reasoning_deltas(tcp_stream, capture, state).await?;
+        return Ok(());
+    }
+    if !already_announced {
+        // The added item starts empty; its done item carries the final
+        // folded arguments.
         let item = state.function_call_item(index, "in_progress", "");
         let sequence_number = state.next_sequence_number();
         let added = serde_json::json!({
@@ -607,14 +635,15 @@ async fn fold_translated_tool_delta(
         emit_translated_event(tcp_stream, capture, "response.output_item.added", added).await?;
     }
     flush_translated_reasoning_deltas(tcp_stream, capture, state).await?;
-    if !arguments.is_empty() {
+    let delta_arguments = held_arguments.as_deref().unwrap_or(arguments);
+    if !delta_arguments.is_empty() {
         let sequence_number = state.next_sequence_number();
         let delta = serde_json::json!({
             "type": "response.function_call_arguments.delta",
             "sequence_number": sequence_number,
             "item_id": item_id,
             "output_index": output_index,
-            "delta": arguments,
+            "delta": delta_arguments,
         });
         emit_translated_event(
             tcp_stream,
@@ -734,6 +763,28 @@ async fn finalize_translated_tool(
     state: &mut ResponsesStreamRelayState,
     index: u64,
 ) -> Result<serde_json::Value> {
+    if !state
+        .tool_calls
+        .get(&index)
+        .map(|call| call.added_emitted)
+        .unwrap_or(false)
+    {
+        // The upstream never named the call: announce first so done always
+        // follows a matching added event.
+        let output_index = state.tool_calls[&index].output_index;
+        let item = state.function_call_item(index, "in_progress", "");
+        let sequence_number = state.next_sequence_number();
+        let added = serde_json::json!({
+            "type": "response.output_item.added",
+            "sequence_number": sequence_number,
+            "output_index": output_index,
+            "item": item,
+        });
+        emit_translated_event(tcp_stream, capture, "response.output_item.added", added).await?;
+        if let Some(call) = state.tool_calls.get_mut(&index) {
+            call.added_emitted = true;
+        }
+    }
     let call = &state.tool_calls[&index];
     let output_index = call.output_index;
     let arguments = call.arguments.clone();

@@ -399,9 +399,10 @@ async fn tool_call_arguments_are_bounded_and_rejected_explicitly() {
 }
 
 #[tokio::test]
-async fn reasoning_dribble_without_items_is_bounded() {
-    // Reasoning arrives before any output slot opens; without a cap these
-    // fragments would accumulate forever while emitting nothing.
+async fn reasoning_dribble_without_items_streams_live() {
+    // Reasoning arrives before any output slot opens; deltas flush live
+    // through an opened message item instead of accumulating, so memory
+    // stays bounded by one fragment and the cap is never reached.
     let dribble = "r".repeat(1024);
     let frames: Vec<Value> = (0..=(MAX_BUFFERED_REASONING_BYTES / 1024))
         .map(|_| {
@@ -410,12 +411,65 @@ async fn reasoning_dribble_without_items_is_bounded() {
             }}]})
         })
         .collect();
-    let (result, wire) = relay_frames_result(frames).await;
-    let err = result.expect_err("unbounded reasoning backlog must abort the relay");
+    let (result, events) = relay_frames(frames).await;
+    assert!(matches!(result, RouteAttemptResult::Delivered { .. }));
+    let reasoning = events_of_type(&events, "response.reasoning_text.delta");
+    assert_eq!(reasoning.len(), 1025);
+    let added = events_of_type(&events, "response.output_item.added");
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0]["item"]["type"], "message");
+}
+
+#[tokio::test]
+async fn reasoning_only_stream_opens_message_item_live() {
+    let (result, events) = relay_frames(vec![
+        json!({"model":"qwen","choices":[{"delta":{"reasoning_content":"step one"}}]}),
+        json!({"model":"qwen","choices":[{"delta":{"reasoning_content":"step two"}}]}),
+        json!({"model":"qwen","choices":[{"delta":{},"finish_reason":"stop"}]}),
+    ])
+    .await;
+    assert!(matches!(result, RouteAttemptResult::Delivered { .. }));
+    let reasoning = events_of_type(&events, "response.reasoning_text.delta");
+    assert_eq!(reasoning.len(), 2);
+    let added_position = events
+        .iter()
+        .position(|event| event["type"] == "response.output_item.added")
+        .expect("message item must open");
+    let first_reasoning_position = events
+        .iter()
+        .position(|event| event["type"] == "response.reasoning_text.delta")
+        .expect("reasoning must stream");
     assert!(
-        err.to_string().contains("buffered reasoning deltas exceed"),
-        "unexpected error: {err}"
+        added_position < first_reasoning_position,
+        "item must open before the first reasoning delta"
     );
-    assert!(wire.contains("invalid_request_error"));
-    assert!(!wire.contains("response.completed"));
+    let added = events_of_type(&events, "response.output_item.added");
+    assert_eq!(added[0]["item"]["type"], "message");
+    assert_eq!(reasoning[0]["item_id"], added[0]["item"]["id"]);
+    assert_eq!(reasoning[1]["item_id"], added[0]["item"]["id"]);
+}
+
+#[tokio::test]
+async fn tool_call_added_waits_for_identity() {
+    let (result, events) = relay_frames(vec![
+        json!({"model":"qwen","choices":[{"delta":{"tool_calls":[
+            {"index":0,"function":{"arguments":r#"{"a":"#}}
+        ]}}]}),
+        json!({"model":"qwen","choices":[{"delta":{"tool_calls":[
+            {"index":0,"id":"call_real","function":{"name":"lookup"}}
+        ]}}]}),
+        json!({"model":"qwen","choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
+    ])
+    .await;
+    assert!(matches!(result, RouteAttemptResult::Delivered { .. }));
+    let added = events_of_type(&events, "response.output_item.added");
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0]["item"]["call_id"], "call_real");
+    assert_eq!(added[0]["item"]["name"], "lookup");
+    let deltas = events_of_type(&events, "response.function_call_arguments.delta");
+    assert_eq!(deltas.len(), 1);
+    assert_eq!(deltas[0]["delta"], r#"{"a":"#);
+    let done = events_of_type(&events, "response.output_item.done");
+    assert_eq!(done[0]["item"]["call_id"], "call_real");
+    assert_eq!(done[0]["item"]["name"], "lookup");
 }
