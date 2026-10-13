@@ -477,6 +477,7 @@ fn client_excluded_arg(id: &str) -> bool {
         id,
         "model"
             | "gguf"
+            | "image_endpoint"
             | "mmproj"
             | "checkpoint_quantization"
             | "checkpoint_imatrix"

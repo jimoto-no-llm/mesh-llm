@@ -440,6 +440,7 @@ impl Node {
         for s in &my_hosted_models {
             served.insert(s.clone());
         }
+        served.extend(self.image_endpoint_models());
         for peer in &peer_data {
             for m in http_routable_models(peer) {
                 served.insert(m.clone());

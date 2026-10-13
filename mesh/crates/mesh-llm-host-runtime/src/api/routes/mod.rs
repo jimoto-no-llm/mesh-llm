@@ -44,6 +44,7 @@ type DispatchRequestFn =
 pub(super) const DISPATCH_REQUEST: DispatchRequestFn =
     |stream, state, method, path, path_only, body, req, raw_request, caller| {
         Box::pin(async move {
+            let trusted_local = caller == chat::CallerTrust::TrustedLocal;
             match (method, path_only) {
                 #[cfg(feature = "payments")]
                 ("POST", "/api/wallet") => {
@@ -121,15 +122,15 @@ pub(super) const DISPATCH_REQUEST: DispatchRequestFn =
                 | ("PUT", "/api/runtime/activity/override")
                 | ("DELETE", "/api/runtime/activity/override")
                 | ("GET", "/api/events") => {
-                    runtime::handle(stream, state, method, path_only, body).await?;
+                    runtime::handle(stream, state, method, path_only, body, trusted_local).await?;
                     Ok(true)
                 }
                 ("DELETE", p) if p.starts_with("/api/runtime/instances/") => {
-                    runtime::handle(stream, state, method, path_only, body).await?;
+                    runtime::handle(stream, state, method, path_only, body, trusted_local).await?;
                     Ok(true)
                 }
                 ("DELETE", p) if p.starts_with("/api/runtime/models/") => {
-                    runtime::handle(stream, state, method, path_only, body).await?;
+                    runtime::handle(stream, state, method, path_only, body, trusted_local).await?;
                     Ok(true)
                 }
                 ("GET", "/api/search") => {

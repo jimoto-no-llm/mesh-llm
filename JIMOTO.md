@@ -1,6 +1,6 @@
 # JIMOTO — 地元フォーク案内
 
-jimoto-no-llm/mesh-llm の独自案内です。上流の使い方（[README](README.md)）に加えて、このフォークでできること・やることをまとめています。
+jimoto-no-llm/mesh-llm の独自案内です。上流の使い方（[README](README.md)）に加えて、このフォークでできること・やることをまとめています。英語版（参考訳）は [JIMOTO.en.md](JIMOTO.en.md) です。
 
 ## このフォークの方針
 
@@ -21,6 +21,20 @@ just build
 ```
 
 ブラウザで `http://localhost:3131` を開くと Web コンソール、API は `http://localhost:9337/v1` です。フォーク情報の確認は `mesh-llm jimoto`（`--json` 付きで機械可読）です。
+
+## 動作確認対象の主要環境
+
+- Linux（x86_64）・macOS・Windows を主要環境とします。
+- 各環境の手順は CONTRIBUTING と `install.sh` / `install.ps1` が基準です。
+- 実際に手順どおり動いた記録は Issue #52 に集めます。
+
+## 動作確認済み環境一覧
+
+| 環境 | 版 | 確認日 | 記録 |
+|---|---|---|---|
+| — | — | — | — |
+
+まだ記録はありません。動いたら Issue #52 に報告してください。
 
 ## スマホで使う
 
@@ -51,6 +65,34 @@ just build
 
 上流の ROADMAP では iOS（Swift＋XCFramework）が先で、Android が後続です。`mesh/sdk/swift` に XCFramework ビルド手順があり、組込みクライアント（iOS・macOS・Android）は正式にサポート対象です。このフォークで iOS アプリを出す段階になったら、ここに手順を足します。それまではブラウザ経由の利用が確実です。
 
+## 画像生成（実験的）
+
+手元で稼働している OpenAI 互換の画像生成サーバーを、メッシュの画像生成モデルとして共有できます。共有したモデルは、メッシュ内のどのノードからでも `POST /v1/images/generations` で利用可能です。生成はサーバーを動かしているノードでのみ行われ、複数ノードへの分散処理には未対応です。
+
+[stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp) の `sd-server` を使用する例です。
+
+```bash
+# 1. 画像生成サーバーを起動する（モデルの指定方法は sd-server の README を参照）
+sd-server <モデルの指定> --listen-ip 127.0.0.1 --listen-port 1234
+
+# 2. メッシュに sd-turbo という名前で共有する
+./target/debug/mesh-llm serve --image-endpoint sd-turbo=http://127.0.0.1:1234/v1
+
+# 3. メッシュ内の任意のノードから呼び出す
+curl -s http://localhost:9337/v1/images/generations \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"sd-turbo","prompt":"a lighthouse at dusk","size":"512x512"}'
+```
+
+- `名前=URL` の名前は、メッシュに広告するモデル名です。リクエストの `model` と照合されるため、サーバーごとに別の名前を付けてください。`--image-endpoint` は複数回指定できます。
+- サーバーのモデル一覧（`/v1/models`）が応答している間のみモデルを広告し、2回連続で応答がなければ取り下げます。取り下げる前に転送が失敗した場合は、同じモデルを共有しているほかのノードがあればそちらへ転送します（`x-mesh-target` で自ノードを指定した要求と、ほかのノードから転送されてきた要求は再転送しません）。mesh-llm 自体はサーバーの起動・停止やモデルの読み込みを行いません。
+- `/v1/models` では、共有したモデルの `metadata.workload_class` が `image_generation` になります。
+- 画像は `data[].b64_json` で返却されます。`response_format` を省略した要求も、`b64_json` を指定してサーバーへ転送します。URL 形式で返る画像はサーバーのあるノード内部を指し、ほかのノードからは参照できないため、`response_format: "url"` は使用できません。`n` は 1〜10 を指定できます。
+- メッシュが最初の応答を待つ時間は最大5分です。`sd-server` は生成が完了してから応答するため、1回の生成に5分以上かかる設定ではエラーになります。
+- URL は `http://` のみ対応しています。認証のないサーバーは、ループバックまたは信頼できるネットワーク内でのみ稼働させてください。
+- `--image-endpoint` は `mesh-llm serve` 専用であり、クライアント（`mesh-llm client`）では使用できません。
+- 画像の編集（`/v1/images/edits`）と、mesh-llm 自身がモデルを読み込んで生成する方式（Skippy での実行）は、今後対応予定です。
+
 ## リリースについて
 
 ### 現状
@@ -73,7 +115,7 @@ just build
 
 - main は保護されています（承認1名必須・stale 却下・スレッド解決必須・squash のみ）。Organization 管理者のみ PR 要件をバイパスできます。
 - コミット件名と PR タイトルは Conventional Commits です。コミットは `just check-commits`、PR タイトルは `python3 scripts/check-conventional-commit.py --message "<タイトル>"` で確認できます。説明は日本語4行（概要・変更・検証・注意点）＋必要に応じ Architecture 節です。
-- ラベルは `perf`・`skippy`・`scheduler`・`cache`・`maintenance`・`documentation`・`ci:canary` を使います。
+- ラベルは `perf`・`skippy`・`scheduler`・`cache`・`maintenance`・`documentation`・`ci:canary` に加え、フォーク独自の `jimoto`・`upstream-sync`・`mobile` を使います。
 - Rust 変更は対象クレートの check・clippy（警告拒否）・関連テストが必須です。ホット4クレートと workspace には `clippy::perf` ゲートがあります。
 
 ## 上流への追従
@@ -81,4 +123,15 @@ just build
 - 定期的に `Mesh-LLM/mesh-llm` の main を取り込みます。
 - フォーク独自差分（日本語化・高速化・ルール）は小さく保ち、衝突時はフォーク側で解消します。
 - 上流へ返せる改善は上流へ PR します。
+
+## ロードマップ
+
+全体方針は Issue #48 で議論しています。進捗はマイルストーンで管理します。
+
+- [フェーズ0：全体方針の確定](https://github.com/jimoto-no-llm/mesh-llm/milestone/1)
+- [フェーズ1：手順・リリース準備](https://github.com/jimoto-no-llm/mesh-llm/milestone/2)
+- [フェーズ2：運用開始](https://github.com/jimoto-no-llm/mesh-llm/milestone/3)
+- [フェーズ3：対応環境の拡大](https://github.com/jimoto-no-llm/mesh-llm/milestone/4)
+- [フェーズ4：英語対応とSDK整備](https://github.com/jimoto-no-llm/mesh-llm/milestone/5)
+- [フェーズ5：分散推論と報酬設計](https://github.com/jimoto-no-llm/mesh-llm/milestone/6)
 

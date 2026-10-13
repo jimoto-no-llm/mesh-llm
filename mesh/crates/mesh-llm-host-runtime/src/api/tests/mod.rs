@@ -75,6 +75,7 @@ mod runtime_config_validation_authority;
 mod runtime_control_state;
 mod runtime_control_state_builder;
 mod runtime_control_state_options;
+mod status_access;
 
 include!("support.rs");
 include!("gpu_status.rs");

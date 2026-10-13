@@ -317,6 +317,7 @@ mod tests {
             "/v1/rerank",
             "/v1/audio/speech",
             "/v1/audio/transcriptions",
+            "/v1/images/generations",
             "/v1/messages",
             "/v1/models",
             "/models",

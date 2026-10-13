@@ -21,6 +21,7 @@ fn unknown_workloads_never_inherit_legacy_admission() {
         "/v1/audio/speech",
         "/v1/audio/transcriptions",
         "/v1/audio/translations",
+        "/v1/images/generations",
     ] {
         assert!(
             !model_satisfies_request_workload(
@@ -161,6 +162,7 @@ fn decision_models_are_excluded_from_every_classed_endpoint() {
         "/v1/audio/speech",
         "/v1/audio/transcriptions",
         "/v1/audio/translations",
+        "/v1/images/generations",
     ] {
         assert!(
             !model_satisfies_request_workload(
@@ -223,4 +225,50 @@ fn system_one_requires_its_own_advertised_capability() {
         "/v1/decisions",
         std::slice::from_ref(&unsupported)
     ));
+}
+
+#[test]
+/// Image generation models answer only the images endpoint, and the images
+/// endpoint never falls back to chat, legacy, or other non-chat models.
+fn image_generation_models_serve_only_the_images_endpoint() {
+    let path = "/v1/images/generations?trace=1";
+    assert_eq!(
+        request_workload_class(path),
+        Some(mesh::ModelWorkloadClass::ImageGeneration)
+    );
+    assert!(!supports_generation_affinity(path));
+    let image = vec![descriptor_with_workload(
+        "sd-turbo",
+        mesh::ModelWorkloadClass::ImageGeneration,
+    )];
+    assert!(model_satisfies_request("sd-turbo", path, &image));
+    for other in [
+        "/v1/chat/completions",
+        "/v1/completions",
+        "/v1/responses",
+        "/v1/embeddings",
+        "/v1/audio/speech",
+    ] {
+        assert!(
+            !model_satisfies_request("sd-turbo", other, &image),
+            "{other}"
+        );
+    }
+    for descriptors in [
+        vec![local_gguf_descriptor("chat")],
+        vec![descriptor_with_workload(
+            "chat",
+            mesh::ModelWorkloadClass::CausalGeneration,
+        )],
+        vec![descriptor_with_workload(
+            "chat",
+            mesh::ModelWorkloadClass::SpeechSynthesis,
+        )],
+    ] {
+        assert!(!model_satisfies_request("chat", path, &descriptors));
+    }
+    assert_eq!(
+        unsupported_workload_message(path, mesh::ModelWorkloadClass::ImageGeneration),
+        "no served model advertises the required ImageGeneration workload"
+    );
 }

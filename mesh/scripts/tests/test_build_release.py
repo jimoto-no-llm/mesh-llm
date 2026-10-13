@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "mesh" / "scripts" / "build-release.sh"
 HOST_SCRIPT = ROOT / "mesh" / "scripts" / "build-host.sh"
 LLD_LIB = ROOT / "scripts" / "lib" / "lld.sh"
+ENSURE_SCCACHE_LIB = ROOT / "scripts" / "lib" / "ensure-sccache.sh"
 
 
 class BuildReleaseScriptTests(unittest.TestCase):
@@ -88,12 +89,22 @@ class BuildReleaseScriptTests(unittest.TestCase):
     def stage_linker_probe(self, scripts_dir: Path, bin_dir: Path) -> None:
         """build-host.sh sources scripts/lib/lld.sh and probes the linker
         with `cc`; stage the lib beside the copied script and a `cc` that
-        always links so the probe never depends on the host toolchain."""
+        always links so the probe never depends on the host toolchain.
+        build-host.sh also requires sccache via ensure-sccache.sh, so stage
+        that lib and a stub `sccache` for the same hermetic reason."""
         lib_dir = scripts_dir / "lib"
         lib_dir.mkdir(exist_ok=True)
         shutil.copy(LLD_LIB, lib_dir / "lld.sh")
+        shutil.copy(ENSURE_SCCACHE_LIB, lib_dir / "ensure-sccache.sh")
         for name in ("macos-deployment-target.sh", "macos-deployment-target.txt"):
             shutil.copy(ROOT / "scripts/lib" / name, lib_dir / name)
+        self.write_executable(
+            bin_dir / "sccache",
+            """
+            #!/usr/bin/env bash
+            exit 0
+            """,
+        )
         self.write_executable(
             bin_dir / "cc",
             """

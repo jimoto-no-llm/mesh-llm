@@ -252,7 +252,7 @@ pub(crate) async fn handle_request(mut stream: TcpStream, state: &MeshApi) -> an
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn dispatch_management_request(
+pub(super) async fn dispatch_management_request(
     stream: &mut TcpStream,
     state: &MeshApi,
     source_addr: Option<std::net::SocketAddr>,

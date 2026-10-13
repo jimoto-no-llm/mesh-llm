@@ -10,9 +10,11 @@ This file covers local build and development workflows for this repository.
 - `cmake`
 - Rust toolchain (`cargo`)
 - `sccache` (required by the repository Cargo configuration)
+- `patchelf` on Linux (required to package native runtimes)
 - Node.js 24 + pnpm 10 or newer (for UI development). The UI lockfile keeps
   `overrides` in `pnpm-workspace.yaml`, which pnpm 9 does not read, so pnpm 9
   cannot install it. `corepack pnpm@10` is enough if your host pnpm is older.
+  Set `MESH_LLM_SKIP_UI=1` to skip the UI build.
 
 Install the pinned compiler cache and the platform linkers with:
 
@@ -20,9 +22,9 @@ Install the pinned compiler cache and the platform linkers with:
 just bootstrap-build-tools
 ```
 
-The bootstrap installs sccache 0.16.0. On Linux it also installs mold and lld
-with the detected system package manager; on macOS it installs lld with
-Homebrew. On Windows it installs the Rust LLVM tools with rustup. Set
+The bootstrap installs sccache 0.16.0. On Linux it also installs mold, lld,
+and patchelf with the detected system package manager; on macOS it installs
+lld with Homebrew. On Windows it installs the Rust LLVM tools with rustup. Set
 `MESH_LLM_SCCACHE_VERSION` only when deliberately testing a newer cache binary.
 
 Without sccache (for example on a machine where it cannot be installed),
@@ -37,12 +39,13 @@ export RUSTC_WRAPPER=""
 linker with `brew install lld`; the repository probes `ld64.lld` against the
 active SDK and uses Apple ld when that installed version is incompatible.
 
-**Linux**: install `mold` and `lld`. Cargo uses mold by default and retains lld
-as the diagnosed compatibility fallback. On Ubuntu/Debian:
+**Linux**: install `mold`, `lld`, and `patchelf`. Cargo uses mold by default
+and retains lld as the diagnosed compatibility fallback; `patchelf` sets the
+`$ORIGIN` rpath when packaging native runtimes. On Ubuntu/Debian:
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y mold lld
+sudo apt-get install -y mold lld patchelf
 ```
 
 **Linux NVIDIA**: x86_64 with an NVIDIA GPU. Requires the CUDA toolkit (`nvcc` in your `PATH`). On Arch Linux, CUDA is typically at `/opt/cuda`; on Ubuntu/Debian it's at `/usr/local/cuda`. Auto-detection finds the right SM architecture for your GPU.

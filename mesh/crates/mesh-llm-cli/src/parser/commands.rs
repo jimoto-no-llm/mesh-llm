@@ -538,6 +538,16 @@ pub struct Cli {
     #[arg(long)]
     pub gguf: Vec<PathBuf>,
 
+    /// Share an already-running OpenAI-compatible image generation server,
+    /// such as stable-diffusion.cpp's sd-server, as model NAME (repeatable).
+    #[arg(
+        long = "image-endpoint",
+        value_name = "NAME=URL",
+        value_parser = super::image_endpoint::parse_image_endpoint_pair,
+        conflicts_with_all = ["client", "local_model_only"]
+    )]
+    pub image_endpoint: Vec<(String, String)>,
+
     /// Explicit mmproj sidecar for the primary served model.
     #[arg(long, hide = true)]
     pub mmproj: Option<PathBuf>,

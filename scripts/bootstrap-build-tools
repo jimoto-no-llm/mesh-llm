@@ -14,13 +14,13 @@ case "$(uname -s)" in
     Linux)
         if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update
-            sudo apt-get install -y mold lld
+            sudo apt-get install -y mold lld patchelf
         elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y mold lld
+            sudo dnf install -y mold lld patchelf
         elif command -v pacman >/dev/null 2>&1; then
-            sudo pacman -S --needed mold lld
+            sudo pacman -S --needed mold lld patchelf
         elif command -v zypper >/dev/null 2>&1; then
-            sudo zypper install -y mold lld
+            sudo zypper install -y mold lld patchelf
         else
             echo "Install mold and lld with the system package manager, then retry." >&2
             exit 1

@@ -37,6 +37,10 @@ async fn stateless_user_metadata_does_not_disable_replica_reservation_spreading(
         ("/v1/embeddings", ModelWorkloadClass::Embedding),
         ("/v1/rerank", ModelWorkloadClass::Rerank),
         ("/v1/audio/speech", ModelWorkloadClass::SpeechSynthesis),
+        (
+            "/v1/images/generations",
+            ModelWorkloadClass::ImageGeneration,
+        ),
     ] {
         let first = peer(&node, Some(class), false).await;
         let second = peer(&node, Some(class), false).await;
@@ -137,6 +141,11 @@ async fn non_chat_targets_require_their_own_workload_advertisement() {
         (
             "/v1/audio/speech",
             ModelWorkloadClass::SpeechSynthesis,
+            false,
+        ),
+        (
+            "/v1/images/generations",
+            ModelWorkloadClass::ImageGeneration,
             false,
         ),
         (

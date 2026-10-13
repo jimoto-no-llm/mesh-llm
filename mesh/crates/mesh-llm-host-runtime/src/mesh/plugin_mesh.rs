@@ -124,6 +124,8 @@ pub(crate) async fn read_plugin_frame_bytes<R>(reader: &mut R, max_len: usize) -
 where
     R: tokio::io::AsyncRead + Unpin,
 {
+    use tokio::io::AsyncReadExt as _;
+
     let mut len_buf = [0u8; 4];
     tokio::time::timeout(
         PLUGIN_FRAME_PREFIX_READ_TIMEOUT,
@@ -138,10 +140,11 @@ where
     .context("read plugin frame prefix")?;
     let len = u32::from_le_bytes(len_buf) as usize;
     anyhow::ensure!(len <= max_len, "Plugin frame too large");
-    let mut buf = vec![0u8; len];
+    // The peer controls the declared length. Grow only as body bytes arrive.
+    let mut buf = Vec::new();
     tokio::time::timeout(
         PLUGIN_FRAME_BODY_READ_TIMEOUT,
-        tokio::io::AsyncReadExt::read_exact(reader, &mut buf),
+        (&mut *reader).take(len as u64).read_to_end(&mut buf),
     )
     .await
     .map_err(|_| {
@@ -150,6 +153,11 @@ where
         )
     })?
     .context("read plugin frame body")?;
+    anyhow::ensure!(
+        buf.len() == len,
+        "plugin frame ended after {} of {len} bytes",
+        buf.len()
+    );
     Ok(buf)
 }
 
@@ -626,6 +634,59 @@ fn least_recently_warned(warn: &HashMap<EndpointId, PluginFrameWarnState>) -> Op
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncWriteExt as _;
+
+    #[tokio::test]
+    async fn plugin_frame_reader_accepts_fragmented_body() {
+        let (mut writer, mut reader) = tokio::io::duplex(4);
+        let send = async {
+            writer.write_all(&6u32.to_le_bytes()).await.unwrap();
+            writer.write_all(b"ab").await.unwrap();
+            writer.write_all(b"cdef").await.unwrap();
+        };
+        let receive = async { read_plugin_frame_bytes(&mut reader, 6).await.unwrap() };
+        let ((), body) = tokio::join!(send, receive);
+        assert_eq!(body, b"abcdef");
+    }
+
+    #[tokio::test]
+    async fn plugin_frame_reader_rejects_short_and_oversized_body() {
+        let (mut writer, mut reader) = tokio::io::duplex(16);
+        writer.write_all(&4u32.to_le_bytes()).await.unwrap();
+        writer.write_all(b"ab").await.unwrap();
+        drop(writer);
+        let error = read_plugin_frame_bytes(&mut reader, 4)
+            .await
+            .expect_err("truncated body must fail");
+        assert!(error.to_string().contains("ended after 2 of 4 bytes"));
+
+        let (mut writer, mut reader) = tokio::io::duplex(16);
+        writer.write_all(&5u32.to_le_bytes()).await.unwrap();
+        let error = read_plugin_frame_bytes(&mut reader, 4)
+            .await
+            .expect_err("oversized frame must fail before body read");
+        assert!(error.to_string().contains("Plugin frame too large"));
+    }
+
+    #[tokio::test]
+    async fn plugin_frame_reader_waits_for_declared_bulk_body() {
+        let (mut writer, mut reader) = tokio::io::duplex(8);
+        writer
+            .write_all(&(PLUGIN_BULK_FRAME_MAX_BYTES as u32).to_le_bytes())
+            .await
+            .unwrap();
+        let mut receive = Box::pin(read_plugin_frame_bytes(
+            &mut reader,
+            PLUGIN_BULK_FRAME_MAX_BYTES,
+        ));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut receive)
+                .await
+                .is_err()
+        );
+        drop(writer);
+        assert!(receive.await.is_err());
+    }
 
     fn peer(seed: u32) -> EndpointId {
         let mut bytes = [0u8; 32];

@@ -26,7 +26,9 @@ with-lld *COMMAND:
         exec {{ COMMAND }}
     fi
     command -v sccache >/dev/null 2>&1 || {
-        echo "Error: sccache is required; install it and retry." >&2
+        echo "Error: sccache is required by .cargo/config.toml but was not found on PATH." >&2
+        echo "Install it with: just bootstrap-build-tools" >&2
+        echo "Or build without the compiler cache for this shell with: export RUSTC_WRAPPER=\"\"" >&2
         exit 1
     }
     scripts/cargo-linker --mesh-probe >/dev/null
@@ -35,7 +37,7 @@ with-lld *COMMAND:
 [private]
 [windows]
 with-lld *COMMAND:
-    @powershell -NoProfile -ExecutionPolicy Bypass -Command "$$ErrorActionPreference = 'Stop'; if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { throw 'sccache is required; install it and retry.' }; Invoke-Expression '{{ COMMAND }}'"
+    @powershell -NoProfile -ExecutionPolicy Bypass -Command "\$ErrorActionPreference = 'Stop'; if (-not (Test-Path Env:RUSTC_WRAPPER)) { if (-not (Get-Command sccache -ErrorAction SilentlyContinue)) { throw 'sccache is required by .cargo/config.toml but was not found on PATH. Install it with: just bootstrap-build-tools.' } }; Invoke-Expression '{{ COMMAND }}'"
 
 
 # Build both local products for the current platform: Skippy, then MeshLLM.
