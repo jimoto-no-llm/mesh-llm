@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)"
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ensure-ui-tools.sh"
+
 UI_DIR="${1:?usage: build-ui.sh /path/to/ui}"
 UI_DIR="$(cd "$UI_DIR" && pwd)"
 DIST_DIR="$UI_DIR/dist"
@@ -102,6 +107,7 @@ pnpm_install_is_stale() {
 if ui_build_is_stale; then
     echo "Building mesh-llm UI (profile: $MESH_LLM_UI_BUILD_PROFILE, debug UI: $VITE_MESH_LLM_DEBUG_UI)..."
     cd "$UI_DIR"
+    ensure_ui_tools
 
     if pnpm_install_is_stale; then
         # onnxruntime-node@1.21.0 postinstall fails on CUDA 13+ (unsupported version).

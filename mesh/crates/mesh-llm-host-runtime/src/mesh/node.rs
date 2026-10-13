@@ -95,6 +95,8 @@ pub struct Node {
     pub(crate) direct_rescue_endpoints: super::direct_rescue::DirectRescueEndpoints,
     pub(crate) role: Arc<Mutex<NodeRole>>,
     pub(crate) host_role_claims: Arc<Mutex<HostRoleClaims>>,
+    /// Advertised `--image-endpoint` servers; see [`crate::inference::image_endpoint`].
+    pub(crate) image_endpoints: crate::inference::image_endpoint::ImageEndpointRegistry,
     pub(crate) models: Arc<Mutex<Vec<String>>>,
     pub(crate) model_source: Arc<Mutex<Option<String>>>,
     pub(crate) serving_models: Arc<Mutex<Vec<String>>>,
@@ -837,6 +839,7 @@ impl Node {
             direct_rescue_endpoints: super::direct_rescue::DirectRescueEndpoints::default(),
             role: Arc::new(Mutex::new(role)),
             host_role_claims: Arc::new(Mutex::new(HostRoleClaims::default())),
+            image_endpoints: Default::default(),
             models: Arc::new(Mutex::new(Vec::new())),
             model_source: Arc::new(Mutex::new(None)),
             serving_models: Arc::new(Mutex::new(Vec::new())),
@@ -1022,6 +1025,7 @@ impl Node {
             direct_rescue_endpoints: super::direct_rescue::DirectRescueEndpoints::default(),
             role: Arc::new(Mutex::new(role)),
             host_role_claims: Arc::new(Mutex::new(HostRoleClaims::default())),
+            image_endpoints: Default::default(),
             models: Arc::new(Mutex::new(Vec::new())),
             model_source: Arc::new(Mutex::new(None)),
             serving_models: Arc::new(Mutex::new(Vec::new())),
@@ -1533,11 +1537,13 @@ impl Node {
     /// Endpoint-local workload admission also snapshots only this node's
     /// models, never a peer's copy.
     pub async fn served_model_descriptors(&self) -> Vec<ServedModelDescriptor> {
-        self.served_model_descriptors.lock().await.clone()
+        let mut descriptors = self.served_model_descriptors.lock().await.clone();
+        self.append_image_endpoint_descriptors(&mut descriptors);
+        descriptors
     }
 
     pub async fn all_served_model_descriptors(&self) -> Vec<ServedModelDescriptor> {
-        let mut descriptors = self.served_model_descriptors.lock().await.clone();
+        let mut descriptors = self.served_model_descriptors().await;
         let peer_descriptors = {
             let state = self.state.lock().await;
             state

@@ -333,20 +333,22 @@ fn parse_failure_family(
         }
         let family = match argument {
             "serve" | "client" => Some(CliCommandFamily::Runtime),
-            "models" | "download" | "model-prepare" | "skippy-model-package" => {
+            "models" | "download" | "model-prepare" | "model-package" | "skippy-model-package" => {
                 Some(CliCommandFamily::Models)
             }
             "update" | "setup" | "uninstall" => Some(CliCommandFamily::Installation),
             "gpus" | "gpu" => Some(CliCommandFamily::Hardware),
-            "runtime" | "load" | "unload" | "drop" | "status" | "stop" => {
+            "runtime" | "kv-cache" | "load" | "unload" | "drop" | "status" | "stop" => {
                 Some(CliCommandFamily::Runtime)
             }
             "wallet" => Some(CliCommandFamily::Wallet),
-            "config" => Some(CliCommandFamily::Configuration),
-            "doctor" => Some(CliCommandFamily::Diagnostics),
+            "config" | "analytics" => Some(CliCommandFamily::Configuration),
+            "doctor" | "jimoto" => Some(CliCommandFamily::Diagnostics),
             "discover" => Some(CliCommandFamily::Discovery),
             "rotate-key" | "auth" => Some(CliCommandFamily::Identity),
-            "goose" | "claude" | "pi" | "opencode" => Some(CliCommandFamily::Agent),
+            "goose" | "claude" | "hermes" | "openclaw" | "pi" | "opencode" => {
+                Some(CliCommandFamily::Agent)
+            }
             "plugins" | "plugin" => Some(CliCommandFamily::Plugin),
             "skills" => Some(CliCommandFamily::Skills),
             "benchmark" => Some(CliCommandFamily::Benchmark),
@@ -503,6 +505,7 @@ fn runtime_options_from_cli(cli: mesh_llm_cli::Cli) -> mesh_llm_host_runtime::Ru
         mesh_discovery_mode: map_mesh_discovery_mode(cli.mesh_discovery_mode),
         model: cli.model,
         gguf: cli.gguf,
+        image_endpoints: cli.image_endpoint,
         mmproj: cli.mmproj,
         checkpoint_quantization: cli.checkpoint_quantization,
         checkpoint_imatrix: cli.checkpoint_imatrix,
@@ -838,6 +841,59 @@ mod cli_entrypoint_tests {
             ),
             CliCommandFamily::Unknown
         );
+    }
+
+    #[test]
+    fn parse_failure_family_matches_command_family_for_previously_missing_commands() {
+        use mesh_llm_events::CliCommandFamily;
+
+        // These subcommands have a family in `command_family` but used to fall
+        // back to Unknown when their arguments failed to parse.
+        for (command, family) in [
+            ("jimoto", CliCommandFamily::Diagnostics),
+            ("kv-cache", CliCommandFamily::Runtime),
+            ("analytics", CliCommandFamily::Configuration),
+            ("hermes", CliCommandFamily::Agent),
+            ("openclaw", CliCommandFamily::Agent),
+            ("model-package", CliCommandFamily::Models),
+        ] {
+            assert_eq!(
+                super::parse_failure_family(
+                    &[
+                        OsString::from("mesh-llm"),
+                        OsString::from(command),
+                        OsString::from("--bad-flag")
+                    ],
+                    None,
+                ),
+                family,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_failure_family_covers_every_subcommand() {
+        use clap::CommandFactory;
+        use mesh_llm_events::CliCommandFamily;
+
+        let cli = mesh_llm_cli::Cli::command();
+        for subcommand in cli.get_subcommands() {
+            for name in std::iter::once(subcommand.get_name()).chain(subcommand.get_all_aliases()) {
+                assert_ne!(
+                    super::parse_failure_family(
+                        &[
+                            OsString::from("mesh-llm"),
+                            OsString::from(name),
+                            OsString::from("--bad-flag")
+                        ],
+                        None,
+                    ),
+                    CliCommandFamily::Unknown,
+                    "a parse failure of `mesh-llm {name}` falls back to Unknown"
+                );
+            }
+        }
     }
 
     #[test]

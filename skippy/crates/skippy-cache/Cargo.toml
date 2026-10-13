@@ -42,5 +42,6 @@ name = "cachegen_cubecl_spike"
 required-features = ["cachegen-spike"]
 
 [lints.clippy]
-# Hot-loop discipline for prefix-match and eviction paths; CI denies warnings.
-perf = "warn"
+# Hot-loop discipline for prefix-match and eviction paths; denied so it
+# gates even without `-D warnings`.
+perf = "deny"

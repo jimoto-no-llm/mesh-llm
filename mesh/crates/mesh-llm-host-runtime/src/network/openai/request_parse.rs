@@ -16,8 +16,11 @@ use audio_multipart::multipart_model_field;
 mod body_rewrite;
 mod chunked;
 mod effective_entity;
+mod framing;
+pub(crate) use body_rewrite::replace_json_body;
 pub use body_rewrite::{inject_skippy_hooks_flag, rewrite_model_field};
 use chunked::{ChunkedDecoder, try_decode_chunked_body};
+use framing::{append_request_framing, request_framing};
 
 pub(crate) const MAX_HEADER_BYTES: usize = 64 * 1024;
 /// Private lifecycle ownership assertion used only on trusted mesh forwarding.
@@ -185,6 +188,12 @@ pub struct BufferedHttpRequest {
 }
 
 impl BufferedHttpRequest {
+    /// Payload bytes after transfer decoding, before compatibility rewrites.
+    /// Transparent forwarding retains its separate raw HTTP representation.
+    pub(crate) fn decoded_body_bytes(&self) -> &[u8] {
+        self.body_bytes.as_deref().unwrap_or_default()
+    }
+
     /// Whether this is the product tokenizer capability route.
     ///
     /// This deliberately requires the exact method and path. Tokenization is
@@ -491,6 +500,7 @@ where
         Some(&rewrite.request_path),
         rewrite.rewritten_body.as_deref(),
         parsed.request_id,
+        limits.max_header_bytes,
     )
     .map_err(|error| OpenAiRequestReadError::after_headers(error, &parsed))?;
     let body_len_bytes = body.len();
@@ -561,7 +571,24 @@ where
     let mut sent_continue = false;
     let mut decoder = ChunkedDecoder::new(body_limits.max_body_bytes);
     loop {
-        if let Some(consumed) = decoder.decode(&raw[header_end..])? {
+        let decision = {
+            let wire = &raw[header_end..];
+            match decoder.decode(wire)? {
+                Some(consumed) => Some(consumed),
+                None => {
+                    // An unfinished message already past the budget cannot become
+                    // legal. Bytes past a completed message are lookahead and are
+                    // judged by `consumed`, not by the size of this read.
+                    ensure_chunked_wire_within_limit(
+                        wire.len(),
+                        body_limits.max_chunked_wire_bytes,
+                    )?;
+                    None
+                }
+            }
+        };
+        if let Some(consumed) = decision {
+            ensure_chunked_wire_within_limit(consumed, body_limits.max_chunked_wire_bytes)?;
             raw.truncate(header_end + consumed);
             return Ok(decoder.into_body());
         }
@@ -570,12 +597,6 @@ where
             sent_continue = true;
         }
         read_body_more(stream, raw, deadline.at(raw.len() - header_end)).await?;
-        if raw.len().saturating_sub(header_end) > body_limits.max_chunked_wire_bytes {
-            bail!(
-                "HTTP chunked wire body exceeds {} bytes",
-                body_limits.max_chunked_wire_bytes
-            );
-        }
     }
 }
 
@@ -690,6 +711,7 @@ fn finalize_forwarded_request(
     rewritten_path: Option<&str>,
     rewritten_body: Option<&[u8]>,
     request_id: RequestId,
+    max_header_bytes: usize,
 ) -> Result<Vec<u8>> {
     let original_body = raw.split_off(header_end);
     // Re-parse with httparse so we iterate over validated header structs.
@@ -700,6 +722,7 @@ fn finalize_forwarded_request(
     let method = req.method.unwrap_or("GET");
     let path = rewritten_path.unwrap_or_else(|| req.path.unwrap_or("/"));
     let version = req.version.unwrap_or(1);
+    let framing = request_framing(req.headers)?;
 
     // Resolve the capsule client nonce once here, at the single point every
     // forwarded request is rebuilt — so local, remote, plugin-endpoint, and
@@ -736,9 +759,8 @@ fn finalize_forwarded_request(
         if strip_expect && name.eq_ignore_ascii_case("expect") {
             continue;
         }
-        if rewritten_body.is_some()
-            && (name.eq_ignore_ascii_case("content-length")
-                || name.eq_ignore_ascii_case("transfer-encoding"))
+        if name.eq_ignore_ascii_case("content-length")
+            || name.eq_ignore_ascii_case("transfer-encoding")
         {
             continue;
         }
@@ -747,6 +769,8 @@ fn finalize_forwarded_request(
     }
     if let Some(body) = rewritten_body {
         rebuilt.push_str(&format!("Content-Length: {}\r\n", body.len()));
+    } else {
+        append_request_framing(&mut rebuilt, framing);
     }
     rebuilt.push_str(&format!("x-request-id: {}\r\n", request_id.as_uuid()));
     rebuilt.push_str(&format!(
@@ -764,6 +788,9 @@ fn finalize_forwarded_request(
     // The proxy buffers exactly one request for routing, so force a single-request
     // connection contract upstream instead of reusing the client connection blindly.
     rebuilt.push_str("Connection: close\r\n\r\n");
+    if rebuilt.len() > max_header_bytes {
+        bail!("HTTP headers exceed {max_header_bytes} bytes");
+    }
 
     let mut forwarded = rebuilt.into_bytes();
     forwarded.extend_from_slice(rewritten_body.unwrap_or(&original_body));
@@ -786,30 +813,19 @@ where
         let mut req = httparse::Request::new(&mut headers_buf);
         match req.parse(buf) {
             Ok(httparse::Status::Complete(header_end)) => {
+                if header_end > max_header_bytes {
+                    bail!("HTTP headers exceed {max_header_bytes} bytes");
+                }
                 let method = req.method.unwrap_or("GET").to_string();
                 let path = req.path.unwrap_or("/").to_string();
 
-                let mut content_length = None;
-                let mut is_chunked = false;
+                let (content_length, is_chunked) = request_framing(req.headers)?.into_parts();
                 let mut expects_continue = false;
                 let mut correlation_id = None;
                 let mut content_type = None;
 
                 for header in req.headers.iter() {
-                    if header.name.eq_ignore_ascii_case("content-length") {
-                        let val = std::str::from_utf8(header.value)
-                            .context("invalid Content-Length encoding")?;
-                        content_length = Some(
-                            val.trim()
-                                .parse::<usize>()
-                                .with_context(|| format!("invalid Content-Length: {val}"))?,
-                        );
-                    } else if header.name.eq_ignore_ascii_case("transfer-encoding") {
-                        let val = std::str::from_utf8(header.value).unwrap_or("");
-                        is_chunked = val
-                            .split(',')
-                            .any(|part| part.trim().eq_ignore_ascii_case("chunked"));
-                    } else if header.name.eq_ignore_ascii_case("expect") {
+                    if header.name.eq_ignore_ascii_case("expect") {
                         let val = std::str::from_utf8(header.value).unwrap_or("");
                         expects_continue = val
                             .split(',')
@@ -830,12 +846,6 @@ where
                         correlation_id =
                             Some(std::str::from_utf8(header.value).unwrap_or("").to_string());
                     }
-                }
-
-                // RFC 7230 §3.3.3: if both Transfer-Encoding and Content-Length
-                // are present, Transfer-Encoding wins and Content-Length is ignored.
-                if is_chunked {
-                    content_length = None;
                 }
 
                 return Ok(ParsedHeaders {
@@ -1186,6 +1196,17 @@ pub(crate) fn internal_model_for_public_id(
     })
 }
 
+fn ensure_chunked_wire_within_limit(wire_bytes: usize, limit: usize) -> Result<()> {
+    if wire_bytes > limit {
+        bail!("HTTP chunked wire body exceeds {limit} bytes");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 #[path = "request_parse_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "request_parse/read_budget_tests.rs"]
+mod read_budget_tests;

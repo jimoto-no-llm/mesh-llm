@@ -286,9 +286,15 @@ fn generation_stop_values_include_chat_template_stops() {
 
 #[test]
 fn valid_utf8_prefix_skips_incomplete_suffix() {
-    assert_eq!(valid_utf8_prefix_len("hello".as_bytes()), 5);
-    assert_eq!(valid_utf8_prefix_len(&[b'h', b'i', 0xE2, 0x82]), 2);
-    assert_eq!(valid_utf8_prefix_len(&[0xF0, 0x9F, 0x98]), 0);
+    use crate::frontend::util::utf8_prefix;
+
+    assert_eq!(utf8_prefix("hello".as_bytes()).valid_len, 5);
+    let incomplete = utf8_prefix(&[b'h', b'i', 0xE2, 0x82]);
+    assert_eq!(incomplete.valid_len, 2);
+    assert!(!incomplete.hard_error);
+    let short = utf8_prefix(&[0xF0, 0x9F, 0x98]);
+    assert_eq!(short.valid_len, 0);
+    assert!(!short.hard_error);
 }
 
 #[test]

@@ -9,6 +9,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/macos-deployment-target.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ensure-sccache.sh"
 UI_DIR="$REPO_ROOT/mesh/crates/mesh-llm-ui"
 BUILD_PROFILE="${MESH_LLM_BUILD_PROFILE:-debug}"
 
@@ -99,6 +101,8 @@ if [[ "${MESH_LLM_DYNAMIC_NATIVE_RUNTIME:-1}" != "1" ]]; then
     echo "Host builds must use dynamic native runtimes; MESH_LLM_DYNAMIC_NATIVE_RUNTIME=0 is unsupported." >&2
     exit 1
 fi
+
+ensure_sccache
 
 report_analytics_key() {
     # Report presence only. The key itself must never reach build logs.

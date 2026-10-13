@@ -22,6 +22,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/cuda-toolkit.sh"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/ensure-packaging-tools.sh"
 BUILD=0
 OUT_DIR="$REPO_ROOT/dist/native-runtimes"
 BACKEND="${LLAMA_STAGE_BACKEND:-${SKIPPY_LLAMA_BACKEND:-cpu}}"
@@ -679,6 +681,10 @@ if [[ -z "$TARGET_TRIPLE" ]]; then
     echo "could not infer target triple; pass --target" >&2
     exit 1
 fi
+
+# patchelf/install_name_tool are only invoked after the long native and
+# release builds; check for them here so a missing binary fails fast.
+ensure_packaging_tools "$(target_runtime_os "$TARGET_TRIPLE")"
 
 # The build directory is keyed by the checkout's pin stamp, so it can only be
 # resolved after the pin is prepared. Resolving first would key the new pin's

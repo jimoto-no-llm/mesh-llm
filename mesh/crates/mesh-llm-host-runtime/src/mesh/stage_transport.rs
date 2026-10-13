@@ -566,7 +566,7 @@ pub struct InflightRequestGuard {
 
 impl Drop for InflightRequestGuard {
     fn drop(&mut self) {
-        let _ = self.inflight_requests.fetch_update(
+        let _ = self.inflight_requests.try_update(
             std::sync::atomic::Ordering::Relaxed,
             std::sync::atomic::Ordering::Relaxed,
             |current| current.checked_sub(1),
@@ -921,19 +921,12 @@ impl Node {
         {
             self.record_stage_load_topology(load).await;
         }
-        // Loading can take minutes on large stages; use the same
-        // per-request budget remote control uses instead of the short default.
-        let timeout = Self::stage_control_request_timeout(&request);
         let Some(tx) = control_tx else {
             anyhow::bail!("stage control is not available");
         };
-        let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
-        tx.send(crate::inference::skippy::StageControlCommand::Execute {
-            request,
-            resp: resp_tx,
-        })
-        .map_err(|_| anyhow::anyhow!("stage control loop is unavailable"))?;
-        let response = wait_local_stage_control_response(resp_rx, timeout).await?;
+        let response = self
+            .execute_stage_control_request_with_sender(Some(tx), request)
+            .await?;
         drop(control_tx_guard);
         match &response {
             crate::inference::skippy::StageControlResponse::Ready(ready) => {

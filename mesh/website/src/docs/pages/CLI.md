@@ -260,6 +260,12 @@ Switches:
 - `--auto`: auto-join the best discovered mesh.
 - `--model <MODEL>`: model to serve (catalog id from `models recommended`, HF ref/URL, or path).
 - `--gguf <GGUF>`: serve a specific local GGUF file directly (repeatable).
+- `--image-endpoint <NAME=URL>`: share an already-running OpenAI-compatible
+  image generation server, such as stable-diffusion.cpp `sd-server`, as model
+  `NAME` (repeatable, `serve` only). While the server's `/v1/models` listing
+  answers, the node advertises `NAME` for `POST /v1/images/generations` and
+  peers route those requests to it. Mesh does not start or stop the server;
+  the URL must use `http://`.
 - `--port <PORT>`: API port (default `9337`).
 - `--client`: API-only mode (no GPU/model serving).
 - `--console <CONSOLE>`: console/API management port (default `3131`).

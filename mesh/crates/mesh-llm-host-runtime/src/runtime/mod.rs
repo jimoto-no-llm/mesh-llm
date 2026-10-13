@@ -27,6 +27,7 @@ mod node_lifecycle_events;
 mod operational_logging;
 mod options;
 mod passive_readiness;
+mod peer_membership_output;
 mod plugin_host_role;
 pub(crate) mod proxy;
 mod publication;

@@ -107,6 +107,7 @@ pub mod requirements;
 mod signed_records;
 mod split_assignment;
 mod stage_artifacts;
+mod stage_control_identity;
 mod stage_proto;
 mod stage_transport;
 mod stage_transport_bridge;

@@ -36,7 +36,8 @@
     "src/client.rs: remove uncalled private head_with_relative_redirects; keep the relative-location predicate and use it so metadata lookups follow same-hub redirects only",
     "src/repository/files.rs: document that file-metadata location is the unfollowed Location header or the final same-hub URL",
     "src/repository/listing.rs: follow same-hub metadata redirects, keep cross-host Location headers without requesting the CDN, and reject a 3xx that has no usable Location",
-    "src/repository/download.rs: box the four inner download implementation futures before awaiting them inside existing public async finishers; signatures remain async, while future representation and allocation change; original 2048/4096-byte limits retained"
+    "src/repository/download.rs: box the four inner download implementation futures before awaiting them inside existing public async finishers; signatures remain async, while future representation and allocation change; original 2048/4096-byte limits retained",
+    "src/repository/diff.rs: pass the copyable fmt_err closure by value to ok_or_else instead of borrowing it, for clippy 1.99 needless_borrows_for_generic_args; behavior unchanged"
   ],
   "imported_sha256": {
     "src/blocking.rs": "ca8360d3688bb7a28f40012cc169c372e2cb53e91a99fb4915746a14b186d1d8",
@@ -51,7 +52,7 @@
     "src/pagination.rs": "8735ab942120711d391f761bdf7e9f4f5de76a1e923722cfcafa98c77c8aff00",
     "src/progress.rs": "9bdc1a9ca8b89f39a48d9045fdc55558d7660bad684ce9a61cc215c98a94c92e",
     "src/repository/commits.rs": "a9beb194ee45b30636844de7a85cf0fc5fe83698c1c77202da2fb33a2912f3a5",
-    "src/repository/diff.rs": "d75a0064385b96d36c678aff8aa65909b58634a5c3336de8f96490561fa40ac5",
+    "src/repository/diff.rs": "5c69579f477107f141342763aa21e79940e89ee055da2eff452a1248537773b2",
     "src/repository/download.rs": "1289dd4617039ed3b04e985159c36ad2f1edaa868d5bc4e998ddc86b38c04209",
     "src/repository/files.rs": "cf4aad64895d494be884154a7ceba6532d7b70da69d8f804dc7b9aadb3b7e33a",
     "src/repository/listing.rs": "7027eaba101961f608aff756fab9fd36e301b129e62719cd09997a1b67c01280",

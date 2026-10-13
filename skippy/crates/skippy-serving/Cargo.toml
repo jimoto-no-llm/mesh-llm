@@ -51,5 +51,6 @@ tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 
 [lints.clippy]
-# Hot-loop discipline for the embedded serving path; CI denies warnings.
-perf = "warn"
+# Hot-loop discipline for the embedded serving path; denied so it gates even
+# without `-D warnings`.
+perf = "deny"

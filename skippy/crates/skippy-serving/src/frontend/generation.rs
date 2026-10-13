@@ -1,6 +1,7 @@
 mod cache_hints;
 mod concurrency;
 mod draft_runner;
+mod generated_decode;
 mod incremental_text;
 mod parsing;
 mod persistent_lanes;

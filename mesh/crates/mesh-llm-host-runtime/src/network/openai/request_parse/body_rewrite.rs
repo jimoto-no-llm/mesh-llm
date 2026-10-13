@@ -112,12 +112,42 @@ fn rebuild_request_body(
     json: Option<serde_json::Value>,
     model: &str,
 ) {
+    store_rebuilt_body(request, header_end, body, json);
+    request.model_name = Some(model.to_string());
+}
+
+fn store_rebuilt_body(
+    request: &mut BufferedHttpRequest,
+    header_end: usize,
+    body: Vec<u8>,
+    json: Option<serde_json::Value>,
+) {
     replace_body(&mut request.raw, header_end, &body);
     request.body_len_bytes = body.len();
     request.body_bytes = Some(body);
     request.body_json = json;
     request.body_json_attempted = true;
-    request.model_name = Some(model.to_string());
+}
+
+/// Forward an endpoint-normalized JSON body in place of the client's.
+/// Returns false, leaving the request untouched, when the request does not
+/// declare a JSON media type.
+pub(crate) fn replace_json_body(
+    request: &mut BufferedHttpRequest,
+    json: serde_json::Value,
+) -> bool {
+    let Some(headers) = body_headers(&request.raw) else {
+        return false;
+    };
+    if !headers.permits_json() {
+        return false;
+    }
+    let Ok(body) = serde_json::to_vec(&json) else {
+        return false;
+    };
+    let end = headers.end;
+    store_rebuilt_body(request, end, body, Some(json));
+    true
 }
 
 /// Rewrite the JSON or multipart model field using the reader's decoded body

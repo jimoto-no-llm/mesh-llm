@@ -127,3 +127,41 @@ fn hook_injection_rejects_non_json_and_sets_one_valid_flag() {
         }
     }
 }
+
+#[tokio::test]
+/// A replaced JSON body is forwarded with one Content-Length and becomes the
+/// parsed body; non-JSON media types are never rewritten.
+async fn replaced_json_body_reframes_the_request() {
+    for chunked in [false, true] {
+        let raw = raw_request(
+            "/v1/images/generations",
+            "application/json",
+            br#"{"model":"sd","prompt":"x"}"#,
+            chunked,
+        );
+        let mut request = read_request(raw).await;
+        let normalized =
+            serde_json::json!({"model": "sd", "prompt": "x", "response_format": "b64_json"});
+        assert!(replace_json_body(&mut request, normalized.clone()));
+        let headers = body_headers(&request.raw).unwrap();
+        assert!(!headers.chunked);
+        let forwarded: serde_json::Value =
+            serde_json::from_slice(&request.raw[headers.end..]).unwrap();
+        assert_eq!(forwarded, normalized);
+        assert_eq!(request.body_json.as_ref(), Some(&normalized));
+        assert_eq!(request.body_len_bytes, request.raw.len() - headers.end);
+        let header_text = String::from_utf8_lossy(&request.raw[..headers.end]).to_ascii_lowercase();
+        assert!(header_text.contains(&format!("content-length: {}", request.body_len_bytes)));
+    }
+
+    let raw = raw_request(
+        "/v1/images/generations",
+        "text/plain",
+        br#"{"model":"sd","prompt":"x"}"#,
+        false,
+    );
+    let mut request = read_request(raw).await;
+    let before = request.raw.clone();
+    assert!(!replace_json_body(&mut request, serde_json::json!({})));
+    assert_eq!(request.raw, before);
+}

@@ -35,15 +35,17 @@ cd mesh-llm
 just build
 ```
 
-必要なものは `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24 です。`just bootstrap-build-tools` で sccache とリンカを入れられます。sccache を入れられない環境では、そのシェルで `export RUSTC_WRAPPER=""` とします。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) をどうぞ。
+必要なものは `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・`patchelf`（Linux のランタイム同梱用）・Node.js 24 です。`just bootstrap-build-tools` で sccache とリンカを入れられます。sccache を入れられない環境では、そのシェルで `export RUSTC_WRAPPER=""` とします。詳しくは [CONTRIBUTING.md](CONTRIBUTING.md) をどうぞ。
+
+ビルドした実行形式は `./target/debug/mesh-llm`（Windows は `.\target\debug\mesh-llm.exe`）にできます。PATH には入らないので、以降の例の `mesh-llm` はこのパスに読み替えるか、PATH を通してください。
 
 セットアップを仕上げます：
 
 ```bash
-mesh-llm setup
+./target/debug/mesh-llm setup
 ```
 
-Windows PowerShell では `mesh-llm.exe setup` です（ネイティブ Windows の注意と、任意の WSL2 構成・複数ノード LAN クラスタは[こちら](#-windows--wsl2-トラブルシュート)）。
+Windows PowerShell では `.\target\debug\mesh-llm.exe setup` です（ネイティブ Windows の注意と、任意の WSL2 構成・複数ノード LAN クラスタは[こちら](#windows-と-wsl2-のトラブルシュート)）。
 
 実行形式のインストールを後で消すときは、先に確認してから消します：
 
@@ -57,7 +59,7 @@ mesh-llm uninstall --yes
 公開メッシュに参加してサーブを開始します：
 
 ```bash
-mesh-llm serve --auto
+./target/debug/mesh-llm serve --auto
 ```
 
 この1行でバックエンド種別を選び、必要ならモデルを落とし、見つかった最良の公開メッシュに参加し、ローカル API（ポート `9337`）と Web コンソール（ポート `3131`）を起動します。
@@ -157,7 +159,7 @@ cd mesh-llm
 just build
 ```
 
-ソースビルドには `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24＋npm が要ります。Cargo は素の `cargo build` ふくめ、リポジトリ設定の既定を使います。導入コマンドとリンカのフォールバックは [CONTRIBUTING.md](CONTRIBUTING.md) です。リリース境界だけ試すなら、素のホストとランタイム1つをビルドします：
+ソースビルドには `just`・`cmake`・Rust・`sccache`・高速リンカ（Linux は `mold`、macOS/Windows は lld）・Node.js 24＋pnpm 10 が要ります。Cargo は素の `cargo build` ふくめ、リポジトリ設定の既定を使います。導入コマンドとリンカのフォールバックは [CONTRIBUTING.md](CONTRIBUTING.md) です。リリース境界だけ試すなら、素のホストとランタイム1つをビルドします：
 
 ```bash
 just release-host-build
@@ -266,7 +268,7 @@ mesh-llm serve --gguf "/mnt/d/models/model.gguf" --listen-all --auto
 
 ## CI 基盤
 
-上流にならい、信頼済み `main` の Linux ジョブは Depot のマネージドランナーを使えます（リポジトリのランナー方針経由）。PR はキャッシュ隔離と保護ワークフローゲートが通るまで GitHub ホステッドのままです。詳しくは [`ci/DEPOT_MIGRATION.md`](ci/DEPOT_MIGRATION.md) です。
+本フォークでは GitHub Actions が現在動作していません（詳細は [JIMOTO.md](JIMOTO.md#リリースについて) を参照してください）。以下は上流の CI 構成です。上流では、リポジトリのランナー方針に基づき、信頼済み `main` の Linux ジョブで Depot のマネージドランナーを利用できます。PR はキャッシュ隔離と保護ワークフローゲートを通過するまで GitHub ホステッドのまま実行されます。詳細は [`ci/DEPOT_MIGRATION.md`](ci/DEPOT_MIGRATION.md) を参照してください。
 
 ## コミュニティ
 

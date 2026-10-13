@@ -4,17 +4,16 @@ use crate::frontend::generation::GenerationMetrics;
 use crate::frontend::generation::ParsedChatMessage;
 use crate::frontend::generation::PreparedGenerationPrompt;
 use crate::frontend::generation::StageOpenAiBackend;
+use crate::frontend::generation::generated_decode::EmitPlan;
+use crate::frontend::generation::generated_decode::OpenText;
 use crate::frontend::generation::incremental_text::suffix_delta;
 use crate::frontend::generation::tool_call_stream::ToolCallStreamState;
 use crate::frontend::generation::tool_calls_requested;
 use crate::frontend::generation::tool_calls_stream_delta;
-use crate::frontend::stop_sequences::stop_in_new_text;
 use crate::frontend::tool_emulation;
 use crate::frontend::util::finish_reason_for_generation;
 use crate::frontend::util::openai_backend_error;
 use crate::frontend::util::saturating_u32;
-use crate::frontend::util::trim_at_stop;
-use crate::frontend::util::valid_utf8_prefix_len;
 use crate::runtime_state::RuntimeState;
 use crate::runtime_state::panic_recovery::lock_runtime;
 use serde_json::Value;
@@ -22,7 +21,6 @@ use skippy_inference_api::ChatCompletionChunk;
 use skippy_inference_api::ChatCompletionRequest;
 use skippy_inference_api::CompletionChunk;
 use skippy_inference_api::FinishReason;
-use skippy_inference_api::InferenceError;
 use skippy_inference_api::InferenceResult;
 use skippy_inference_api::Usage;
 use skippy_runtime::StageModelReader;
@@ -341,12 +339,7 @@ where
     model: StageModelReader,
     stop_values: Vec<&'a str>,
     on_text_chunk: F,
-    text: String,
-    streamed_text_len: usize,
-    max_stop_bytes: usize,
-    /// Length of `text` already searched for stop sequences.
-    stop_searched_len: usize,
-    generated_text_bytes: Vec<u8>,
+    open: OpenText,
     completion_tokens: usize,
     generation_gate: Option<Arc<dyn crate::frontend::generation_gate::GenerationGate>>,
     finish_reason: FinishReason,
@@ -374,11 +367,7 @@ where
             model,
             stop_values,
             on_text_chunk,
-            text: String::new(),
-            streamed_text_len: 0,
-            max_stop_bytes,
-            stop_searched_len: 0,
-            generated_text_bytes: Vec::new(),
+            open: OpenText::new(max_stop_bytes),
             completion_tokens: 0,
             generation_gate: None,
             finish_reason: finish_reason_for_generation(true),
@@ -432,35 +421,13 @@ where
             .model
             .detokenize_bytes(&[token])
             .map_err(openai_backend_error)?;
-        self.generated_text_bytes.extend_from_slice(&piece);
         self.metrics.detokenize_ms += detokenize_timer.elapsed().as_secs_f64() * 1000.0;
-        let valid_len = valid_utf8_prefix_len(&self.generated_text_bytes);
-        if valid_len > 0 {
-            let candidate = std::str::from_utf8(&self.generated_text_bytes[..valid_len])
-                .map_err(|error| InferenceError::backend(error.to_string()))?;
-            if let Some(delta) = candidate.strip_prefix(&self.text) {
-                if !delta.is_empty() {
-                    self.text = candidate.to_string();
-                }
-            } else if candidate != self.text {
-                self.text = candidate.to_string();
-                self.stop_searched_len = 0;
-            }
-        }
-        let stop_found = stop_in_new_text(
-            &self.text,
-            self.stop_searched_len,
-            &self.stop_values,
-            self.max_stop_bytes,
-        );
-        self.stop_searched_len = self.text.len();
-        if stop_found {
-            self.text = trim_at_stop(&self.text, &self.stop_values).to_string();
+        if self.open.push_piece(&piece, &self.stop_values) {
             self.emit_safe_delta(true)?;
             self.finish_reason = finish_reason_for_generation(false);
             return Ok(TokenControl::Stop);
         }
-        if self.emulation_active && tool_emulation::emulated_tool_call_complete(&self.text) {
+        if self.emulation_active && tool_emulation::emulated_tool_call_complete(self.open.text()) {
             self.emit_safe_delta(true)?;
             self.finish_reason = finish_reason_for_generation(false);
             return Ok(TokenControl::Stop);
@@ -470,26 +437,15 @@ where
     }
 
     pub(in crate::frontend) fn emit_safe_delta(&mut self, flush_all: bool) -> InferenceResult<()> {
-        let mut target_len = if flush_all || self.max_stop_bytes == 0 {
-            self.text.len()
-        } else {
-            self.text
-                .len()
-                .saturating_sub(self.max_stop_bytes.saturating_sub(1))
-        };
-        while target_len > self.streamed_text_len && !self.text.is_char_boundary(target_len) {
-            target_len -= 1;
-        }
-        if target_len < self.streamed_text_len {
-            self.streamed_text_len = target_len;
-            return Ok(());
-        }
-        if target_len > self.streamed_text_len {
-            let delta = &self.text[self.streamed_text_len..target_len];
-            let emit_timer = Instant::now();
-            (self.on_text_chunk)(delta)?;
-            self.metrics.text_emit_ms += emit_timer.elapsed().as_secs_f64() * 1000.0;
-            self.streamed_text_len = target_len;
+        match self.open.plan_emit(flush_all) {
+            EmitPlan::Shrink(len) => self.open.commit_streamed(len),
+            EmitPlan::Delta { start, end } => {
+                let emit_timer = Instant::now();
+                (self.on_text_chunk)(&self.open.text()[start..end])?;
+                self.metrics.text_emit_ms += emit_timer.elapsed().as_secs_f64() * 1000.0;
+                self.open.commit_streamed(end);
+            }
+            EmitPlan::Idle => {}
         }
         Ok(())
     }
@@ -516,7 +472,7 @@ where
             predicted_ms: cache_stats.predicted_ms,
             queue_wait_ms: cache_stats.queue_wait_ms,
             restore_ms: cache_stats.restore_ms,
-            text: self.text,
+            text: self.open.into_text(),
             finish_reason: self.finish_reason,
             detokenize_ms: self.metrics.detokenize_ms,
             text_emit_ms: self.metrics.text_emit_ms,

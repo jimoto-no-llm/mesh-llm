@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 pub(crate) enum HostRoleClaim {
     LocalModel,
     PluginInference,
+    ImageEndpoint,
 }
 
 #[derive(Default)]
@@ -34,7 +35,9 @@ impl HostRoleClaims {
 }
 
 impl Node {
-    pub async fn claim_host_role(&self, claim: HostRoleClaim, http_port: u16) {
+    /// Returns whether this claim turned the node into a host, in which case
+    /// the change has already been gossiped.
+    pub async fn claim_host_role(&self, claim: HostRoleClaim, http_port: u16) -> bool {
         let transitioned = {
             let mut claims = self.host_role_claims.lock().await;
             claims.claim(claim);
@@ -49,9 +52,12 @@ impl Node {
         if transitioned {
             self.regossip().await;
         }
+        transitioned
     }
 
-    pub async fn release_host_role(&self, claim: HostRoleClaim) {
+    /// Returns whether releasing this claim turned the node back into a
+    /// worker, in which case the change has already been gossiped.
+    pub async fn release_host_role(&self, claim: HostRoleClaim) -> bool {
         let transitioned = {
             let mut claims = self.host_role_claims.lock().await;
             if !claims.release(claim) || !claims.is_empty() {
@@ -69,6 +75,7 @@ impl Node {
         if transitioned {
             self.regossip().await;
         }
+        transitioned
     }
 }
 
@@ -94,5 +101,19 @@ mod tests {
 
         node.release_host_role(HostRoleClaim::LocalModel).await;
         assert_eq!(node.role().await, NodeRole::Worker);
+    }
+
+    #[tokio::test]
+    async fn host_role_claims_report_only_role_transitions() {
+        let node = Node::new_for_tests(NodeRole::Worker).await.unwrap();
+
+        assert!(
+            node.claim_host_role(HostRoleClaim::ImageEndpoint, 9337)
+                .await
+        );
+        assert!(!node.claim_host_role(HostRoleClaim::LocalModel, 9337).await);
+        assert!(!node.release_host_role(HostRoleClaim::ImageEndpoint).await);
+        assert!(node.release_host_role(HostRoleClaim::LocalModel).await);
+        assert!(!node.release_host_role(HostRoleClaim::LocalModel).await);
     }
 }

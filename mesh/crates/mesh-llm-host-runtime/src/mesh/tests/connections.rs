@@ -386,6 +386,7 @@ async fn make_test_node_with_requirements(
         direct_rescue_endpoints: crate::mesh::direct_rescue::DirectRescueEndpoints::default(),
         role: Arc::new(Mutex::new(role)),
         host_role_claims: Arc::new(Mutex::new(HostRoleClaims::default())),
+        image_endpoints: Default::default(),
         models: Arc::new(Mutex::new(Vec::new())),
         model_source: Arc::new(Mutex::new(None)),
         serving_models: Arc::new(Mutex::new(Vec::new())),

@@ -1,25 +1,25 @@
 ---
-name: Bug report
-about: Report something broken or unexpectedly failing
+name: バグ報告
+about: 壊れている・想定外の動作を報告する
 title: ""
 labels: bug
 assignees: ""
 ---
 
-## Problem
+## 起きていること
 
-What happened, and what did you expect instead?
+何が起き、代わりにどうなることを期待したか書いてください。
 
-## Steps to reproduce
+## 再現手順
 
 1.
 2.
 3.
 
-## Diagnostics
+## 診断情報
 
-Include the command you ran, platform/backend, relevant logs, `/api/status` output if available, and whether this was a private mesh, published mesh, or `--auto` join.
+実行コマンド、環境・バックエンド、関連ログ、あれば `/api/status` の出力、プライベートmesh・公開mesh・`--auto` 参加のどれかを書いてください。
 
-## Extra context
+## 補足
 
-Add screenshots, videos, links, or notes that may help us understand the issue.
+スクショ・動画・リンク・メモがあれば添えてください。

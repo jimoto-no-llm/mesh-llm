@@ -110,6 +110,7 @@ impl RequestSummaryMetadata {
             "/v1/audio/speech" => Some("audio_speech"),
             "/v1/audio/transcriptions" => Some("audio_transcriptions"),
             "/v1/audio/translations" => Some("audio_translations"),
+            "/v1/images/generations" => Some("images_generations"),
             "/v1/chat/completions" => Some("chat_completions"),
             "/v1/completions" => Some("completions"),
             "/v1/responses" => Some("responses"),
@@ -321,6 +322,16 @@ mod tests {
                 assert!(metadata.model().is_none());
             }
         }
+    }
+
+    /// The mesh ingress serves image generation without an embedded
+    /// frontend route, so it owns this label alone.
+    #[test]
+    fn image_generation_ingress_label_drops_the_query() {
+        let metadata =
+            RequestSummaryMetadata::from_openai_ingress_path("/v1/images/generations?token=secret");
+        assert_eq!(metadata.route(), Some("images_generations"));
+        assert!(metadata.model().is_none());
     }
 
     #[test]
