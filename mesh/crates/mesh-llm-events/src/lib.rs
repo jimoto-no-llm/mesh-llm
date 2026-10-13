@@ -10,6 +10,7 @@ use std::sync::{Arc, OnceLock, RwLock};
 pub mod audit;
 pub mod console;
 pub mod logging;
+pub mod split_assignment;
 pub mod terminal_progress;
 
 mod command_lifecycle;
@@ -141,6 +142,11 @@ pub struct DashboardSnapshot {
     pub current_inflight_requests: u64,
     pub accepted_request_buckets: Vec<DashboardAcceptedRequestBucket>,
     pub latency_samples_ms: Vec<u64>,
+    pub system_memory_total_bytes: Option<u64>,
+    pub system_memory_available_bytes: Option<u64>,
+    pub system_disk_path: Option<String>,
+    pub system_disk_total_bytes: Option<u64>,
+    pub system_disk_available_bytes: Option<u64>,
 }
 
 impl Default for DashboardSnapshot {
@@ -157,6 +163,11 @@ impl Default for DashboardSnapshot {
                 })
                 .collect(),
             latency_samples_ms: Vec::new(),
+            system_memory_total_bytes: None,
+            system_memory_available_bytes: None,
+            system_disk_path: None,
+            system_disk_total_bytes: None,
+            system_disk_available_bytes: None,
         }
     }
 }
@@ -423,6 +434,16 @@ pub enum OutputEvent {
         message: String,
         context: Option<String>,
     },
+    /// Coordinator identity is independent of the operator-facing message.
+    SplitCoordinator {
+        node_id: String,
+        model: String,
+    },
+    /// Stage zero's full identity and the display summary are separate fields.
+    SplitStages {
+        coordinator_id: Option<String>,
+        summary: String,
+    },
     Startup {
         version: String,
         message: Option<String>,
@@ -622,6 +643,8 @@ impl OutputEvent {
         match self {
             OutputEvent::CliCommandLifecycle { .. } => "cli_command_lifecycle",
             OutputEvent::Info { .. } => "info",
+            OutputEvent::SplitCoordinator { .. } => "split_coordinator",
+            OutputEvent::SplitStages { .. } => "split_stages",
             OutputEvent::Startup { .. } => "startup",
             OutputEvent::LaunchPlan { .. } => "launch_plan",
             OutputEvent::NodeIdentity { .. } => "node_identity",
@@ -704,6 +727,11 @@ impl OutputEvent {
                 message
             }
             OutputEvent::Info { message, .. } => message.clone(),
+            OutputEvent::SplitCoordinator { node_id, model } => format!(
+                "model={model}: Split runtime coordinator is {}; standing by for stage assignment",
+                split_assignment::display_node_id(node_id)
+            ),
+            OutputEvent::SplitStages { summary, .. } => format!("Split stages {summary}"),
             OutputEvent::Startup { message, .. } => message
                 .clone()
                 .unwrap_or_else(|| "mesh-llm starting".to_string()),

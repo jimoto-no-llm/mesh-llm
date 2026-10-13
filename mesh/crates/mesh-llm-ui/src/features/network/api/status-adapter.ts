@@ -168,7 +168,7 @@ function adaptPeer(peer: PeerInfo, fallbackIndex: number): Peer {
 
 function isSplitParticipant(payload: StatusPayload): boolean {
   const stages = payload.runtime?.stages ?? []
-  return stages.some((s) => s.node_id === payload.node_id)
+  return stages.some((s) => sameNodeId(s.node_id, payload.node_id))
 }
 
 function adaptSelfPeer(payload: StatusPayload): Peer {
@@ -284,7 +284,23 @@ function adaptStatusMetrics(payload: StatusPayload): StatusMetric[] {
       label: 'Inflight',
       value: inflightRequests
     },
-    servingStrategyMetric(payload)
+    servingStrategyMetric(payload),
+    ...coordinatorMetric(payload)
+  ]
+}
+
+function coordinatorMetric(payload: StatusPayload): StatusMetric[] {
+  const coordinator = payload.split_coordinator
+  if (!coordinator) return []
+  return [
+    {
+      id: 'split-coordinator',
+      label: 'Coordinator',
+      value: coordinator.hostname ?? coordinator.short_node_id,
+      meta: coordinator.is_self ? 'this node' : 'remote',
+      variant: 'identity',
+      mono: true
+    }
   ]
 }
 
@@ -343,10 +359,51 @@ function adaptMeshNodeSeeds(payload: StatusPayload): MeshNode[] {
   return [selfNode]
 }
 
+function sameNodeId(left: string | undefined, right: string | undefined): boolean {
+  if (!left || !right) return false
+  if (left === right) return true
+  const [shorter, longer] = left.length <= right.length ? [left, right] : [right, left]
+  return shorter.length >= 8 && longer.startsWith(shorter)
+}
+
+function stageForPeer(payload: StatusPayload, peerId: string) {
+  return (payload.runtime?.stages ?? []).find((stage) => sameNodeId(stage.node_id, peerId))
+}
+
+function annotateSplitRoles(peers: Peer[], payload: StatusPayload): Peer[] {
+  const coordinator = payload.split_coordinator
+  const stages = payload.runtime?.stages ?? []
+  return peers.map((peer) => {
+    const stage = stageForPeer(payload, peer.id)
+    const isCoordinator =
+      coordinator != null &&
+      (sameNodeId(coordinator.node_id, peer.id) || sameNodeId(coordinator.short_node_id, peer.id))
+    // Only the local node waits: every other standby may never join this split.
+    const isSelf = peer.id === payload.node_id
+    const waitingForCoordinator =
+      coordinator && !isCoordinator && isSelf && stages.length === 0 && peer.nodeState === 'standby'
+        ? (coordinator.hostname ?? coordinator.short_node_id)
+        : undefined
+    return {
+      ...peer,
+      coordinator: isCoordinator || undefined,
+      splitStage: stage
+        ? {
+            stageIndex: stage.stage_index,
+            layerStart: stage.layer_start,
+            layerEnd: stage.layer_end,
+            state: stage.state
+          }
+        : undefined,
+      waitingForCoordinator
+    }
+  })
+}
+
 export function adaptStatusToDashboard(payload: StatusPayload, models: ModelSummary[] = []): DashboardHarnessData {
   const selfPeer = adaptSelfPeer(payload)
   const remotePeers = payload.peers.map(adaptPeer)
-  const allPeers = normalizePeerShares([selfPeer, ...remotePeers])
+  const allPeers = annotateSplitRoles(normalizePeerShares([selfPeer, ...remotePeers]), payload)
   return {
     ...DASHBOARD_HARNESS,
     hero: adaptHero(payload),

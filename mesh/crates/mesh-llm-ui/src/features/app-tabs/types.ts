@@ -52,6 +52,14 @@ export type Peer = {
   latencyAgeMs?: number | null
   latencyObserverId?: string | null
   firstJoinedMeshTs?: number
+  coordinator?: boolean
+  splitStage?: {
+    stageIndex?: number
+    layerStart: number
+    layerEnd: number
+    state: string
+  }
+  waitingForCoordinator?: string
 }
 export type PeerSummary = { total: number; online: number; capacity: string }
 

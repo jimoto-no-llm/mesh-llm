@@ -707,4 +707,122 @@ describe('advertised memory in the dashboard adapter', () => {
       })
     )
   })
+
+  it('shows the elected coordinator before stages exist, and stage rows once they do', () => {
+    const waiting = adaptStatusToDashboard({
+      ...PUBLIC_STATUS_PAYLOAD,
+      node_id: 'smallnode1',
+      node_state: 'standby',
+      my_hostname: 'small.local',
+      split_coordinator: {
+        node_id: 'bignode0123456789',
+        short_node_id: 'bignode012',
+        hostname: 'big.local',
+        elected_at_unix_ms: 1_700_000_000_000,
+        is_self: false
+      },
+      peers: [
+        {
+          id: 'bignode012',
+          role: 'Host',
+          state: 'loading',
+          models: [],
+          vram_gb: 24,
+          serving_models: [],
+          hosted_models: [],
+          hostname: 'big.local'
+        },
+        {
+          id: 'othernode1',
+          role: 'Host',
+          state: 'standby',
+          models: [],
+          vram_gb: 8,
+          serving_models: [],
+          hosted_models: [],
+          hostname: 'other.local'
+        }
+      ]
+    })
+
+    expect(waiting.peers.find((peer) => peer.id === 'smallnode1')).toEqual(
+      expect.objectContaining({ coordinator: undefined, waitingForCoordinator: 'big.local' })
+    )
+    expect(waiting.peers.find((peer) => peer.id === 'othernode1')).toEqual(
+      expect.objectContaining({ coordinator: undefined, waitingForCoordinator: undefined })
+    )
+    expect(waiting.peers.find((peer) => peer.id === 'bignode012')).toEqual(
+      expect.objectContaining({ coordinator: true, waitingForCoordinator: undefined })
+    )
+    expect(waiting.statusMetrics.find((metric) => metric.id === 'split-coordinator')).toEqual(
+      expect.objectContaining({ value: 'big.local', meta: 'remote' })
+    )
+
+    const assigned = adaptStatusToDashboard({
+      ...PUBLIC_STATUS_PAYLOAD,
+      node_id: 'smallnode1',
+      node_state: 'standby',
+      split_coordinator: {
+        node_id: 'bignode0123456789',
+        short_node_id: 'bignode012',
+        hostname: 'big.local',
+        elected_at_unix_ms: 1_700_000_000_000,
+        is_self: false
+      },
+      runtime: {
+        stages: [
+          {
+            stage_id: 's0',
+            model_id: 'model',
+            stage_index: 0,
+            node_id: 'bignode0123456789',
+            layer_start: 0,
+            layer_end: 20,
+            state: 'ready'
+          },
+          {
+            stage_id: 's1',
+            model_id: 'model',
+            stage_index: 1,
+            node_id: 'smallnode1extra',
+            layer_start: 21,
+            layer_end: 35,
+            state: 'loading'
+          }
+        ]
+      },
+      peers: [
+        {
+          id: 'bignode012',
+          role: 'Host',
+          state: 'serving',
+          models: [],
+          vram_gb: 24,
+          serving_models: [],
+          hosted_models: [],
+          hostname: 'big.local'
+        }
+      ]
+    })
+
+    expect(assigned.peers.find((peer) => peer.id === 'bignode012')?.splitStage).toEqual({
+      stageIndex: 0,
+      layerStart: 0,
+      layerEnd: 20,
+      state: 'ready'
+    })
+    expect(assigned.peers.find((peer) => peer.id === 'smallnode1')?.splitStage).toEqual({
+      stageIndex: 1,
+      layerStart: 21,
+      layerEnd: 35,
+      state: 'loading'
+    })
+    expect(assigned.peers.find((peer) => peer.id === 'smallnode1')?.waitingForCoordinator).toBeUndefined()
+  })
+
+  it('leaves a non-split mesh peer list unchanged', () => {
+    const dashboard = adaptStatusToDashboard(PUBLIC_STATUS_PAYLOAD)
+    expect(dashboard.peers.every((peer) => peer.coordinator == null && peer.splitStage == null)).toBe(true)
+    expect(dashboard.statusMetrics.find((metric) => metric.id === 'split-coordinator')).toBeUndefined()
+  })
 })

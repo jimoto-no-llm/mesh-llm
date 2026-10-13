@@ -85,6 +85,7 @@ pub(crate) fn status_payload(snapshot: StatusViewSnapshot) -> StatusPayload {
         recent_mesh_rejections: vec![],
         plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
         logging: None,
+        split_coordinator: None,
     }
 }
 
@@ -253,6 +254,7 @@ mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         assert_eq!(

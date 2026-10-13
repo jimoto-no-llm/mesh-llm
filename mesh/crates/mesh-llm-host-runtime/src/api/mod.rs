@@ -58,6 +58,7 @@ mod model_targets;
 mod network_diagnostics;
 pub(crate) mod routes;
 mod server;
+mod split_coordinator;
 mod split_readiness;
 mod state;
 pub(crate) mod status;
@@ -954,7 +955,9 @@ impl MeshApi {
         );
         node.refresh_stage_runtime_statuses(std::time::Duration::from_secs(2))
             .await;
-        runtime.stages = build_runtime_stage_payloads(node.stage_runtime_statuses().await);
+        let stage_statuses = node.stage_runtime_statuses().await;
+        crate::mesh::publish_observed_stages(&stage_statuses);
+        runtime.stages = build_runtime_stage_payloads(stage_statuses);
 
         let wakeable_nodes = wakeable_inventory.status_snapshot().await;
         let hardware = runtime_data_collector
@@ -967,7 +970,7 @@ impl MeshApi {
         append_external_inference_models(&mut serving_models, &plugin_models);
         let mut hosted_models = node.hosted_models().await;
         append_external_inference_models(&mut hosted_models, &plugin_models);
-        let (peers, connected_peer_ids) = peer_reporting_snapshot(&node).await;
+        let (peers, connected_peer_ids, split_coordinator) = peer_reporting_snapshot(&node).await;
 
         decorate_runtime_payload(
             &mut runtime,
@@ -1025,6 +1028,9 @@ impl MeshApi {
         };
         payload.logging =
             crate::logging_runtime_state().map(|state| LoggingStatusPayload::from(state.status()));
+        payload.split_coordinator = split_coordinator
+            .as_ref()
+            .map(|observation| split_coordinator_from_payload(observation, &payload));
         payload
     }
 
@@ -1035,13 +1041,42 @@ impl MeshApi {
     }
 }
 
+fn split_coordinator_from_payload(
+    observation: &mesh::SplitCoordinatorObservation,
+    payload: &StatusPayload,
+) -> split_coordinator::SplitCoordinatorPayload {
+    let peer_hostnames = payload
+        .peers
+        .iter()
+        .filter_map(|peer| {
+            peer.hostname
+                .as_deref()
+                .map(|hostname| split_coordinator::CoordinatorPeerHostname {
+                    short_node_id: peer.id.as_str(),
+                    hostname,
+                })
+        })
+        .collect::<Vec<_>>();
+    split_coordinator::split_coordinator_payload(
+        observation,
+        &payload.node_id,
+        payload.my_hostname.as_deref(),
+        &peer_hostnames,
+    )
+}
+
 async fn peer_reporting_snapshot(
     node: &mesh::Node,
 ) -> (
     Vec<mesh::PeerInfo>,
     std::collections::HashSet<iroh::EndpointId>,
+    Option<mesh::SplitCoordinatorObservation>,
 ) {
-    (node.peers().await, node.connected_peer_ids().await)
+    (
+        node.peers().await,
+        node.connected_peer_ids().await,
+        node.split_coordinator().await,
+    )
 }
 
 fn decorate_runtime_payload(

@@ -84,6 +84,10 @@ pub(crate) struct SplitReadinessReport {
     /// would think to read. Absent when no strategy was named.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) serving_strategy: Option<crate::api::status::ServingStrategyPayload>,
+    /// Coordinator elected on this node. Independent of `participants`: those
+    /// can exclude the node that already won the election.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) split_coordinator: Option<super::split_coordinator::SplitCoordinatorPayload>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -146,28 +150,51 @@ impl MeshApi {
             stage_path: SplitStagePathSnapshot::unknown(),
         };
         let mut peers = Vec::new();
+        let mut peer_hostnames = Vec::new();
         let blocked_now_ms = crate::network::peer_blocks::now_ms();
         for peer in node.peers().await {
+            if let Some(hostname) = peer.hostname.clone() {
+                peer_hostnames.push((peer.id.fmt_short().to_string(), hostname));
+            }
             let blocked = node.peer_blocks.is_blocked(&peer.id, blocked_now_ms);
             let stage_path = node.split_stage_path_snapshot(peer.id).await;
             peers.push(peer_readiness_input(peer, stage_path, blocked));
         }
         let active_topology_count = node.stage_topologies().await.len();
-        let active_stage_count = node
-            .stage_runtime_statuses()
-            .await
+        let stage_statuses = node.stage_runtime_statuses().await;
+        crate::mesh::publish_observed_stages(&stage_statuses);
+        let active_stage_count = stage_statuses
             .into_iter()
             .filter(|status| status.model_id == model_ref)
             .count();
+        let observation = node.split_coordinator().await;
 
-        build_split_readiness_report(SplitReadinessInput {
+        let mut report = build_split_readiness_report(SplitReadinessInput {
             model_ref: model_ref.to_string(),
             local,
             peers,
             capacity_advice,
             active_topology_count,
             active_stage_count,
-        })
+        });
+        if let Some(observation) = observation.as_ref() {
+            let peer_hostname_refs = peer_hostnames
+                .iter()
+                .map(
+                    |(id, hostname)| super::split_coordinator::CoordinatorPeerHostname {
+                        short_node_id: id,
+                        hostname,
+                    },
+                )
+                .collect::<Vec<_>>();
+            report.split_coordinator = Some(super::split_coordinator::split_coordinator_payload(
+                observation,
+                &node.id().fmt_short().to_string(),
+                node.hostname.as_deref(),
+                &peer_hostname_refs,
+            ));
+        }
+        report
     }
 }
 
@@ -207,6 +234,7 @@ pub(crate) fn build_split_readiness_report(input: SplitReadinessInput) -> SplitR
         blockers,
         recommendations,
         serving_strategy: crate::api::status::build_serving_strategy_payload(),
+        split_coordinator: None,
     }
 }
 

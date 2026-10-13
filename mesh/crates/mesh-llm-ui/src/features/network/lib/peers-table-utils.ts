@@ -100,7 +100,30 @@ export function displayHostname(peer: { hostname: string; id: string; shortId?: 
   return hostname
 }
 
-export function rowAriaLabel(peer: { shortId?: string; id: string; hostname: string }, active: boolean): string {
+export function splitAssignmentLabel(peer: {
+  coordinator?: boolean
+  splitStage?: { stageIndex?: number; layerStart: number; layerEnd: number; state: string }
+}): string | undefined {
+  const parts: string[] = []
+  if (peer.coordinator) parts.push('coordinator')
+  if (peer.splitStage) {
+    if (peer.splitStage.stageIndex != null) parts.push(`stage ${peer.splitStage.stageIndex}`)
+    parts.push(`layers ${peer.splitStage.layerStart}–${peer.splitStage.layerEnd}`)
+    parts.push(peer.splitStage.state)
+  }
+  return parts.length > 0 ? parts.join(' · ') : undefined
+}
+
+export function rowAriaLabel(
+  peer: {
+    shortId?: string
+    id: string
+    hostname: string
+    coordinator?: boolean
+    splitStage?: { stageIndex?: number; layerStart: number; layerEnd: number; state: string }
+  },
+  active: boolean
+): string {
   const primaryId = peer.shortId ?? peer.id
   const hostname = displayHostname(peer)
   const nodeLabel = hostname
@@ -108,7 +131,8 @@ export function rowAriaLabel(peer: { shortId?: string; id: string; hostname: str
     : primaryId === peer.id
       ? `peer ${peer.id}`
       : `peer ${primaryId}, peer ID ${peer.id}`
-  return `View ${nodeLabel}${active ? ' (selected)' : ''}`
+  const assignment = splitAssignmentLabel(peer)
+  return `View ${nodeLabel}${assignment ? `, ${assignment}` : ''}${active ? ' (selected)' : ''}`
 }
 
 export function nextSortState(current: SortState, key: SortKey): SortState {

@@ -39,6 +39,22 @@ fn serving_strategy_json_fields(event: &OutputEvent) -> Value {
     json!({ "strategy": strategy, "applied": applied, "declined": declined })
 }
 
+fn info_json_fields(message: &str, context: &Option<String>) -> Value {
+    json!({ "message": message, "context": context })
+}
+
+fn invite_token_json_fields(token: &str, mesh_id: &str, mesh_name: &Option<String>) -> Value {
+    json!({ "token": token, "mesh_id": mesh_id, "mesh_name": mesh_name })
+}
+
+fn peer_joined_json_fields(peer_id: &str, label: &Option<String>) -> Value {
+    json!({ "peer_id": peer_id, "label": label })
+}
+
+fn discovery_failed_json_fields(message: &str, detail: &Option<String>) -> Value {
+    json!({ "message": message, "detail": detail })
+}
+
 pub(in crate::output) trait OutputEventPresentation {
     fn pretty_text(&self) -> String;
     fn summary_line(&self) -> String;
@@ -283,9 +299,14 @@ impl OutputEventPresentation for OutputEvent {
                 json!({ "command_family": family.as_str(), "code": outcome.code(), "outcome": outcome.as_str() })
             }
             OutputEvent::ServingStrategyResolved { .. } => serving_strategy_json_fields(self),
-            OutputEvent::Info { message, context } => {
-                json!({ "message": message, "context": context })
+            OutputEvent::Info { message, context } => info_json_fields(message, context),
+            OutputEvent::SplitCoordinator { node_id, model } => {
+                json!({ "node_id": node_id, "model": model })
             }
+            OutputEvent::SplitStages {
+                coordinator_id,
+                summary,
+            } => json!({ "coordinator_id": coordinator_id, "summary": summary }),
             OutputEvent::Startup { version, .. } => json!({ "version": version }),
             OutputEvent::LaunchPlan { plan } => json!({
                 "llama_process_count": plan.llama_process_rows.len(),
@@ -299,9 +320,7 @@ impl OutputEventPresentation for OutputEvent {
                 token,
                 mesh_id,
                 mesh_name,
-            } => {
-                json!({ "token": token, "mesh_id": mesh_id, "mesh_name": mesh_name })
-            }
+            } => invite_token_json_fields(token, mesh_id, mesh_name),
             OutputEvent::DiscoveryStarting { source } => json!({ "source": source }),
             OutputEvent::MeshFound {
                 mesh,
@@ -310,7 +329,7 @@ impl OutputEventPresentation for OutputEvent {
             } => json!({ "mesh": mesh, "peers": peers, "region": region }),
             OutputEvent::DiscoveryJoined { mesh } => json!({ "mesh": mesh }),
             OutputEvent::DiscoveryFailed { message, detail } => {
-                json!({ "message": message, "detail": detail })
+                discovery_failed_json_fields(message, detail)
             }
             OutputEvent::WaitingForPeers { detail } => json!({ "detail": detail }),
             OutputEvent::PassiveMode {
@@ -326,9 +345,7 @@ impl OutputEventPresentation for OutputEvent {
                 "models_on_disk": models_on_disk,
                 "detail": detail,
             }),
-            OutputEvent::PeerJoined { peer_id, label } => {
-                json!({ "peer_id": peer_id, "label": label })
-            }
+            OutputEvent::PeerJoined { peer_id, label } => peer_joined_json_fields(peer_id, label),
             OutputEvent::PeerLeft { peer_id, reason } => {
                 json!({ "peer_id": peer_id, "reason": reason })
             }

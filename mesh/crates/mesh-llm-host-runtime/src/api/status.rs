@@ -391,6 +391,10 @@ pub(crate) struct StatusPayload {
     /// state has been initialized so older consumers retain their prior shape.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) logging: Option<LoggingStatusPayload>,
+    /// Split coordinator elected on this node. Present while `runtime.stages`
+    /// is still empty, which is the window before layer assignment.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) split_coordinator: Option<super::split_coordinator::SplitCoordinatorPayload>,
 }
 
 /// Local-only plugin-mesh frame telemetry.
@@ -1059,6 +1063,7 @@ mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         let json = serde_json::to_string(&status).expect("serialization failed");
@@ -1134,6 +1139,7 @@ mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         let json = serde_json::to_string(&status).expect("serialization failed");
@@ -1209,6 +1215,7 @@ mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         let json = serde_json::to_value(&status).expect("serialization failed");
@@ -1279,6 +1286,7 @@ mod tests {
             recent_mesh_rejections: vec![],
             plugin_frame_telemetry: PluginFrameTelemetryPayload::default(),
             logging: None,
+            split_coordinator: None,
         };
 
         let json = serde_json::to_value(&status).expect("serialization failed");

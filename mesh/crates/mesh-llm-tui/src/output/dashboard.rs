@@ -395,6 +395,25 @@ impl DashboardState {
                 &snapshot.loaded_model_rows,
             );
         }
+        self.system_memory_total_bytes = snapshot
+            .system_memory_total_bytes
+            .filter(|total| *total != 0);
+        self.system_memory_available_bytes = if self.system_memory_total_bytes.is_some() {
+            snapshot.system_memory_available_bytes
+        } else {
+            None
+        };
+        self.system_disk_total_bytes = snapshot.system_disk_total_bytes.filter(|total| *total != 0);
+        self.system_disk_available_bytes = if self.system_disk_total_bytes.is_some() {
+            snapshot.system_disk_available_bytes
+        } else {
+            None
+        };
+        self.system_disk_path = if self.system_disk_total_bytes.is_some() {
+            snapshot.system_disk_path.clone()
+        } else {
+            None
+        };
         self.sync_truthful_startup_statuses();
         self.request_history = DashboardRequestHistoryState::from_snapshot(snapshot);
         self.clamp_all_panel_views();
@@ -1093,6 +1112,7 @@ impl DashboardState {
 
     pub(super) fn apply_output_event(&mut self, event: &OutputEvent) {
         self.record_startup_history_event(event);
+        self.note_split_assignment(event);
 
         if self.shutdown_in_progress && is_shutdown_suppressed_ready_event(event) {
             return;
@@ -1165,8 +1185,13 @@ impl DashboardState {
                 join_token_view.scroll_offset = 0;
                 join_token_view.selected_row = None;
             }
-            OutputEvent::PeerJoined { peer_id, .. } => {
-                self.peer_ids.insert(peer_id.clone());
+            OutputEvent::PeerJoined { peer_id, label, .. } => {
+                let normalized = label
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string);
+                self.peer_ids.insert(peer_id.clone(), normalized);
             }
             OutputEvent::PeerLeft { peer_id, .. } => {
                 self.peer_ids.remove(peer_id);

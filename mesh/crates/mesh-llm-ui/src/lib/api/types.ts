@@ -139,10 +139,19 @@ export type MeshPublicationState = 'private' | 'public' | 'publish_failed'
 export interface RuntimeStageInfo {
   stage_id: string
   model_id: string
+  stage_index?: number
   node_id?: string
   layer_start: number
   layer_end: number
   state: string
+}
+
+export interface SplitCoordinatorInfo {
+  node_id: string
+  short_node_id: string
+  hostname?: string
+  elected_at_unix_ms: number
+  is_self: boolean
 }
 
 /// One axis a serving strategy either filled in or deferred on.
@@ -210,6 +219,7 @@ export interface StatusPayload {
   first_joined_mesh_ts?: number
   wakeable_nodes?: WakeableNode[]
   logging?: LoggingStatus
+  split_coordinator?: SplitCoordinatorInfo
 }
 
 // ============================================================
