@@ -1,6 +1,6 @@
 use super::status::current_time_unix_ms;
 use super::{LocalRuntimeModelHandle, sort_dashboard_endpoint_rows};
-use crate::{api, mesh, models, plugin};
+use crate::{api, mesh, models, plugin, system};
 use mesh_llm_events::{
     DashboardAcceptedRequestBucket, DashboardEndpointRow, DashboardModelLane, DashboardModelRow,
     DashboardProcessRow, DashboardSnapshot, DashboardSnapshotFuture, DashboardSnapshotProvider,
@@ -39,6 +39,7 @@ pub(super) struct RuntimeDashboardSnapshotProvider {
     pub(super) inventory_snapshot_ttl: Duration,
     pub(super) inventory_snapshot_loader:
         Arc<dyn Fn() -> crate::models::LocalModelInventorySnapshot + Send + Sync>,
+    pub(super) system_resources: Arc<system::resources::SystemResourcesSampler>,
 }
 
 #[cfg(test)]
@@ -83,6 +84,7 @@ impl RuntimeDashboardSnapshotProvider {
             inventory_snapshot_loader: Arc::new(|| {
                 crate::models::scan_local_inventory_snapshot_with_progress(|_| {})
             }),
+            system_resources: Arc::new(system::resources::SystemResourcesSampler::new()),
         }
     }
 
@@ -107,6 +109,7 @@ impl RuntimeDashboardSnapshotProvider {
             )),
             inventory_snapshot_ttl: options.inventory_snapshot_ttl,
             inventory_snapshot_loader: options.inventory_snapshot_loader,
+            system_resources: Arc::new(system::resources::SystemResourcesSampler::new()),
         }
     }
 
@@ -198,63 +201,6 @@ pub(super) fn dashboard_quantization_from_model_name(model_name: &str) -> Option
         .map(|key| models::inventory::derive_quantization_type(&key))
         .map(|quantization| quantization.trim().trim_end_matches(".gguf").to_string())
         .find(|quantization| !quantization.is_empty())
-}
-
-pub(super) struct SnapshotSystemResources {
-    pub(super) memory_total_bytes: u64,
-    pub(super) memory_available_bytes: u64,
-    pub(super) disk_path: String,
-    pub(super) disk_total_bytes: u64,
-    pub(super) disk_available_bytes: u64,
-}
-
-pub(super) fn sample_snapshot_system_resources() -> Option<SnapshotSystemResources> {
-    let mut system = sysinfo::System::new();
-    system.refresh_memory();
-    let memory_total_bytes = system.total_memory();
-    let memory_available_bytes = system.available_memory();
-    if memory_total_bytes == 0 {
-        return None;
-    }
-    let disks = sysinfo::Disks::new_with_refreshed_list();
-    let disk = pick_snapshot_disk(&disks)?;
-    Some(SnapshotSystemResources {
-        memory_total_bytes,
-        memory_available_bytes,
-        disk_path: disk.mount_point().to_string_lossy().into_owned(),
-        disk_total_bytes: disk.total_space(),
-        disk_available_bytes: disk.available_space(),
-    })
-}
-
-fn pick_snapshot_disk(disks: &sysinfo::Disks) -> Option<&sysinfo::Disk> {
-    let current = std::env::current_dir().ok();
-    if let Some(current) = current
-        .as_ref()
-        .and_then(|p| p.to_str().map(str::to_string))
-    {
-        let mut best: Option<&sysinfo::Disk> = None;
-        let mut best_len = 0;
-        for disk in disks.list() {
-            let mount = disk.mount_point().to_string_lossy().into_owned();
-            if current.starts_with(&mount) && mount.len() > best_len {
-                best_len = mount.len();
-                best = Some(disk);
-            }
-        }
-        if let Some(best) = best {
-            return if best.total_space() == 0 {
-                None
-            } else {
-                Some(best)
-            };
-        }
-    }
-    disks
-        .list()
-        .iter()
-        .max_by_key(|disk| disk.total_space())
-        .filter(|disk| disk.total_space() != 0)
 }
 
 pub(super) fn dashboard_inventory_model_keys(model_name: &str) -> Vec<String> {
@@ -373,17 +319,27 @@ impl DashboardSnapshotProvider for RuntimeDashboardSnapshotProvider {
             }
             sort_dashboard_endpoint_rows(&mut webserver_rows);
 
-            let system_resources = sample_snapshot_system_resources();
+            let sampler = self.system_resources.clone();
+            let system_resources =
+                match tokio::task::spawn_blocking(move || sampler.sample_blocking()).await {
+                    Ok(sample) => sample,
+                    Err(err) => {
+                        tracing::warn!("dashboard system resources snapshot failed: {err}");
+                        None
+                    }
+                };
             DashboardSnapshot {
-                system_memory_total_bytes: system_resources.as_ref().map(|r| r.memory_total_bytes),
+                system_memory_total_bytes: system_resources
+                    .as_ref()
+                    .and_then(|r| r.memory_total_bytes),
                 system_memory_available_bytes: system_resources
                     .as_ref()
-                    .map(|r| r.memory_available_bytes),
-                system_disk_path: system_resources.as_ref().map(|r| r.disk_path.clone()),
-                system_disk_total_bytes: system_resources.as_ref().map(|r| r.disk_total_bytes),
+                    .and_then(|r| r.memory_available_bytes),
+                system_disk_path: system_resources.as_ref().and_then(|r| r.disk_path.clone()),
+                system_disk_total_bytes: system_resources.as_ref().and_then(|r| r.disk_total_bytes),
                 system_disk_available_bytes: system_resources
                     .as_ref()
-                    .map(|r| r.disk_available_bytes),
+                    .and_then(|r| r.disk_available_bytes),
                 llama_process_rows: process_rows
                     .into_iter()
                     .map(|process| DashboardProcessRow {
