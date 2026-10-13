@@ -127,6 +127,80 @@ class CallSiteTests(unittest.TestCase):
         self.assertIn("command -v sccache", recipe)
         self.assertNotIn("RUSTFLAGS", recipe)
 
+    def test_the_with_lld_recipe_honors_the_documented_wrapper_bypass(self) -> None:
+        """An explicitly set RUSTC_WRAPPER replaces sccache, so only an unset
+        variable may demand it; `export RUSTC_WRAPPER=""` is the documented
+        bypass for machines without sccache."""
+        source = read_justfile_source(JUSTFILE)
+        start = source.index("[unix]\nwith-lld *COMMAND:\n")
+        end = source.index("[windows]\nwith-lld *COMMAND:", start)
+        body = "\n".join(
+            line[4:]
+            for line in source[start:end].splitlines()
+            if line.startswith("    ")
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            for path in (directory / "scripts" / "cargo-linker", directory / "bin" / "ran"):
+                path.parent.mkdir(exist_ok=True)
+                path.write_text("#!/bin/sh\necho RAN\n", encoding="utf-8")
+                path.chmod(0o755)
+            script = directory / "with-lld.sh"
+            script.write_text(
+                body.replace("{{ COMMAND }}", str(directory / "bin" / "ran")),
+                encoding="utf-8",
+            )
+            sccache_dir = directory / "sccache-bin"
+            sccache_dir.mkdir()
+            sccache = sccache_dir / "sccache"
+            sccache.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            sccache.chmod(0o755)
+
+            def run(path: Path, **extra: str) -> subprocess.CompletedProcess[str]:
+                env = {"PATH": str(path), **extra}
+                return subprocess.run(
+                    ["/bin/bash", str(script)],
+                    cwd=directory,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            bypassed = run(directory / "bin", RUSTC_WRAPPER="")
+            self.assertEqual(bypassed.returncode, 0, bypassed.stderr)
+            self.assertIn("RAN", bypassed.stdout)
+            missing = run(directory / "bin")
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("sccache", missing.stderr)
+            self.assertNotIn("RAN", missing.stdout)
+            cached = run(sccache_dir)
+            self.assertEqual(cached.returncode, 0, cached.stderr)
+            self.assertIn("RAN", cached.stdout)
+
+    def test_the_windows_with_lld_recipe_honors_the_documented_wrapper_bypass(self) -> None:
+        """Windows must also skip the sccache demand when RUSTC_WRAPPER is set.
+
+        `Test-Path Env:RUSTC_WRAPPER` mirrors the Unix `${RUSTC_WRAPPER+set}`
+        guard and `ensure_sccache`; otherwise the guided bypass would still
+        fail through `with-lld` recipes such as `ci-crate-lists`. The guidance
+        stays bootstrap-only: `$env:RUSTC_WRAPPER=""` is no bypass on
+        PowerShell 5.1, and a bare `$env:` would be eaten by sh expansion."""
+        source = read_justfile_source(JUSTFILE)
+        start = source.index("[windows]\nwith-lld *COMMAND:")
+        end = source.index("# Build both local products", start)
+        recipe = source[start:end]
+        self.assertIn("Test-Path Env:RUSTC_WRAPPER", recipe)
+        self.assertIn("Get-Command sccache", recipe)
+        self.assertIn("just bootstrap-build-tools", recipe)
+        self.assertNotIn("$env:RUSTC_WRAPPER", recipe)
+        self.assertNotIn("$env:", recipe)
+        self.assertNotIn("$$", recipe)
+        self.assertIn("\\$ErrorActionPreference", recipe)
+        guard = recipe.index("Test-Path Env:RUSTC_WRAPPER")
+        demand = recipe.index("Get-Command sccache")
+        self.assertLess(guard, demand)
+
     def test_macos_setup_provisions_both_required_accelerators(self) -> None:
         action = MACOS_SETUP.read_text(encoding="utf-8")
         self.assertIn("brew install lld", action)

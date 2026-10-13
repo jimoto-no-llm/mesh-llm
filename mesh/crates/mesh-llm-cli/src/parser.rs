@@ -1,4 +1,5 @@
 mod commands;
+mod image_endpoint;
 mod logging_help;
 mod normalization;
 mod runtime_surface_help;

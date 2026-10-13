@@ -1,23 +1,23 @@
 ---
-name: Feature request
-about: Suggest a new capability or improvement
+name: 機能リクエスト
+about: 新しい機能や改善を提案する
 title: ""
 labels: enhancement
 assignees: ""
 ---
 
-## Feature
+## 希望する機能
 
-What would you like mesh-llm to do?
+mesh-llmに何ができるようになってほしいですか。
 
-## Problem or use case
+## 課題・利用場面
 
-What problem does this solve, and who is it for?
+どんな課題が解決でき、誰のためか書いてください。
 
-## Desired behavior
+## 期待する動作
 
-What should happen when this works well?
+うまく動いたとき、どうなるか書いてください。
 
-## Extra context
+## 補足
 
-Add examples, screenshots, links, or constraints that may help maintainers evaluate the request.
+例・スクショ・リンク・制約があれば添えてください。

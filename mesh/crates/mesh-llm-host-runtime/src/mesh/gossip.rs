@@ -886,7 +886,7 @@ impl Node {
         write_gossip_payload(
             &mut send,
             protocol,
-            &outbound,
+            outbound,
             self.endpoint.id(),
             &crate::mesh::plugin_keys::to_proto(&self.plugin_keys.own()),
         )
@@ -956,7 +956,7 @@ impl Node {
         write_gossip_payload(
             &mut send,
             protocol,
-            &outbound,
+            outbound,
             self.endpoint.id(),
             &crate::mesh::plugin_keys::to_proto(&self.plugin_keys.own()),
         )

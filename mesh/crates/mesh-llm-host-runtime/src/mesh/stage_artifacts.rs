@@ -141,7 +141,8 @@ impl Node {
         }
     }
 
-    async fn execute_stage_control_request_with_sender(
+    pub(crate) async fn execute_stage_control_request_with_sender(
+        &self,
         control_tx: Option<
             tokio::sync::mpsc::UnboundedSender<crate::inference::skippy::StageControlCommand>,
         >,
@@ -151,7 +152,11 @@ impl Node {
         // per-request budget the remote sender uses instead of the short
         // local default, otherwise the executing node rejects its own load.
         let timeout = Self::stage_control_request_timeout(&request);
-        match control_tx {
+        let stop = match &request {
+            crate::inference::skippy::StageControlRequest::Stop(stop) => Some(stop.clone()),
+            _ => None,
+        };
+        let response = match control_tx {
             Some(tx) => {
                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                 tx.send(crate::inference::skippy::StageControlCommand::Execute {
@@ -159,10 +164,18 @@ impl Node {
                     resp: resp_tx,
                 })
                 .map_err(|_| anyhow::anyhow!("stage control loop is unavailable"))?;
-                wait_local_stage_control_response(resp_rx, timeout).await
+                wait_local_stage_control_response(resp_rx, timeout).await?
             }
-            None => Ok(stage_control_unavailable_response(request)),
+            None => stage_control_unavailable_response(request),
+        };
+        if let (Some(stop), crate::inference::skippy::StageControlResponse::Ready(ready)) =
+            (stop, &response)
+            && ready.accepted
+        {
+            self.stop_stage_transport_bridge(&stop.topology_id, &stop.run_id, &stop.stage_id)
+                .await;
         }
+        Ok(response)
     }
 
     pub(crate) fn stage_control_load_failure_response(
@@ -226,12 +239,13 @@ impl Node {
         Ok(())
     }
 
-    async fn authorize_resolve_and_execute_stage_control(
+    pub(super) async fn authorize_resolve_and_execute_stage_control(
         &self,
         remote: EndpointId,
         request_kind: &str,
         mut request: crate::inference::skippy::StageControlRequest,
     ) -> anyhow::Result<crate::inference::skippy::StageControlResponse> {
+        super::stage_control_identity::validate_coordinator_identity(remote, &request)?;
         // Keep claims and loads ordered while authorization and source
         // resolution run. The load is enqueued before another claim can pass
         // this gate, so a validated claim cannot become stale mid-resolution.
@@ -247,7 +261,8 @@ impl Node {
                 {
                     self.record_stage_load_topology(load).await;
                 }
-                match Self::execute_stage_control_request_with_sender(control_tx, request.clone())
+                match self
+                    .execute_stage_control_request_with_sender(control_tx, request.clone())
                     .await
                 {
                     Ok(response) => response,
@@ -316,11 +331,8 @@ impl Node {
                 Self::authorize_stage_load(control_tx, load).await?;
                 self.resolve_stage_load_request(load).await?;
             }
-            crate::inference::skippy::StageControlRequest::Stop(stop) => {
-                self.stop_stage_transport_bridge(&stop.topology_id, &stop.run_id, &stop.stage_id)
-                    .await;
-            }
-            crate::inference::skippy::StageControlRequest::Status(_)
+            crate::inference::skippy::StageControlRequest::Stop(_)
+            | crate::inference::skippy::StageControlRequest::Status(_)
             | crate::inference::skippy::StageControlRequest::Inventory(_) => {}
         }
         Ok(())

@@ -30,6 +30,8 @@ mod split_coverage {
 
         include!("announcement_unique.rs");
         include!("control_plane_unique.rs");
+        include!("stage_control_identity.rs");
         include!("stage_control.rs");
+        include!("stage_stop.rs");
     }
 }

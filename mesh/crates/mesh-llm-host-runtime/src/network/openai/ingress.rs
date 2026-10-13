@@ -830,7 +830,8 @@ async fn auto_route_pool_for_ready_models<'a>(
     auto_route::pool_for_ready_models(available, &ready_models)
 }
 
-/// Check workload-aware ingress readiness, including remote and local-startup fallbacks.
+/// Check workload-aware ingress readiness, including this node's image
+/// endpoints and remote and local-startup fallbacks.
 async fn auto_route_model_has_ready_ingress_target(
     node: &mesh::Node,
     targets: &election::ModelTargets,
@@ -839,6 +840,11 @@ async fn auto_route_model_has_ready_ingress_target(
     request_path: &str,
     affinity: &affinity::AffinityRouter,
 ) -> bool {
+    // Ahead of the peer checks because `route_missing_local_model` offers the
+    // request to this node's image endpoint before any peer.
+    if super::image_generation::local_endpoint_serves(node, model, request_path) {
+        return true;
+    }
     let local_candidates =
         workload_routing::ingress_candidates(node, model, request_path, targets).await;
     if contains_routable_candidate(&local_candidates) {
@@ -1032,8 +1038,9 @@ fn warn_pipeline_fallback(strong_name: &str) {
 
 /// Route a request whose model is not being served from local candidates
 /// (either genuinely absent locally, or forced away from local by
-/// `x-mesh-target`/`x-mesh-exclude` -- see `route_request`), trying remote
-/// mesh peers, then local-unavailable/plugin fallbacks, then 404.
+/// `x-mesh-target`/`x-mesh-exclude` -- see `route_request`), trying this
+/// node's image endpoint, remote mesh peers, then local-unavailable/plugin
+/// fallbacks, then 404.
 #[allow(clippy::too_many_arguments)]
 async fn route_missing_local_model(
     tcp_stream: ClientStream,
@@ -1045,6 +1052,23 @@ async fn route_missing_local_model(
     required_tokens: Option<u32>,
     route_observer: OpenAiRouteObserver<'_>,
 ) -> proxy::RouteDispatchOutcome {
+    let tcp_stream = match super::image_generation::route_to_local_image_endpoint(
+        ctx.node,
+        tcp_stream,
+        request,
+        model_name,
+        super::image_generation::ImageRouteScope {
+            target,
+            excluded,
+            from_peer: ctx.requested_by_node_id.is_some(),
+        },
+        route_observer,
+    )
+    .await
+    {
+        Ok(outcome) => return outcome,
+        Err(tcp_stream) => tcp_stream,
+    };
     // An explicit self-target can never be found by `resolve_remote_mesh_route`
     // below -- it only searches OTHER peers' advertised hosts -- so it always
     // failed closed with a spurious 409 even when this node serves the model

@@ -1,22 +1,11 @@
-## Title
+<!--
+JIMOTO.md の「運用ルール」に基づき、このフォークの PR 説明は日本語4行（概要・変更・検証・注意点）で記述してください。
+大きなアーキテクチャ変更は「## Architecture」節、プロトコルや互換性への影響は「## Protocol」節に分けて記載してください。
+CLI の挙動を変更するときは実行例と出力を、UI を変更するときはスクリーンショットを添付してください。
+-->
+概要：
+変更：
+検証：
+注意点：
 
-Use an accurate title that describes the user-visible change or fix.
-
-## Original problem
-
-What was broken, missing, confusing, or risky before this PR?
-
-## Diagnostics
-
-How did you verify the problem? Include commands, logs, screenshots, or links when useful.
-
-## Fix
-
-How does this PR fix the problem? Call out compatibility, protocol, or migration concerns if any.
-
-## Validation
-
-- [ ] I ran the relevant local checks, or explained why they do not apply.
-- [ ] UI changes include screenshots or video, or explain why visual aids are not needed.
-
-<!-- Rust changes: format touched files, run cargo check plus cargo clippy --all-targets -- -D warnings per touched crate (-p mesh-llm too when reachable from the binary), run the relevant tests, and keep just check-commits green for the title. See AGENTS.md Pre-Commit Checklist. -->
+<!-- Rust の変更：変更したクレートごとに cargo fmt、cargo check、cargo clippy --all-targets -- -D warnings を実行し（mesh-llm のバイナリに影響する変更は -p mesh-llm でも実行）、関連テストを実行してください。コミット件名は just check-commits、PR タイトルは python3 scripts/check-conventional-commit.py --message "<タイトル>" で確認できます。詳しくは AGENTS.md の Pre-Commit Checklist を参照してください。 -->

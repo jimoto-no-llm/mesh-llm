@@ -9,7 +9,8 @@ changes. The import uses workspace versioning; the upstream source version
 remains 1.0.2 in that provenance record.
 
 Production changes beyond rustfmt are limited to boxing four inner download
-futures before awaiting them, removing an uncalled private HEAD helper, and
+futures before awaiting them, removing an uncalled private HEAD helper,
+passing a copyable closure by value in the diff parser for Clippy 1.99, and
 teaching file-metadata lookup to follow same-hub redirects, read
 cross-host redirect headers in place, and reject a redirect that has no
 usable Location. The public finishers remain async

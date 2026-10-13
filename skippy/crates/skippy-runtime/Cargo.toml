@@ -30,5 +30,6 @@ tokio = { version = "1", features = ["sync"] }
 tempfile = "3"
 
 [lints.clippy]
-# Hot-loop discipline for the staged execution path; CI denies warnings.
-perf = "warn"
+# Hot-loop discipline for the staged execution path; denied so it gates even
+# without `-D warnings`.
+perf = "deny"

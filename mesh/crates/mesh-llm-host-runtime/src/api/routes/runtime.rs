@@ -1,7 +1,7 @@
 use super::super::{
     MeshApi, RuntimeControlRequest,
     http::{respond_error, respond_json, respond_runtime_error},
-    status::decode_runtime_model_path,
+    status::{StatusPayload, decode_runtime_model_path},
 };
 use super::control_apply_diagnostics::{
     LocalControlApplyDiagnosticPayload, local_control_apply_diagnostic_payload,
@@ -54,9 +54,10 @@ pub(super) async fn handle(
     method: &str,
     path_only: &str,
     body: &str,
+    trusted_local: bool,
 ) -> anyhow::Result<()> {
     match method {
-        "GET" => handle_get(stream, state, path_only).await,
+        "GET" => handle_get(stream, state, path_only, trusted_local).await,
         "POST" => handle_post(stream, state, path_only, body).await,
         "PUT" => handle_put(stream, state, path_only, body).await,
         "DELETE" => handle_delete(stream, state, path_only, body).await,
@@ -68,9 +69,10 @@ async fn handle_get(
     stream: &mut TcpStream,
     state: &MeshApi,
     path_only: &str,
+    trusted_local: bool,
 ) -> anyhow::Result<()> {
     match path_only {
-        "/api/status" => handle_status(stream, state).await,
+        "/api/status" => handle_status(stream, state, trusted_local).await,
         "/api/models" => handle_models(stream, state).await,
         "/api/runtime" => handle_runtime_status(stream, state).await,
         "/api/runtime/llama" => handle_runtime_llama(stream, state).await,
@@ -86,7 +88,7 @@ async fn handle_get(
         "/api/runtime/control-bootstrap" => handle_control_bootstrap(stream, state).await,
         "/api/runtime/intents" => handle_get_intents(stream, state).await,
         "/api/runtime/activity" => super::runtime_activity::handle_get(stream, state).await,
-        "/api/events" => handle_events(stream, state).await,
+        "/api/events" => handle_events(stream, state, trusted_local).await,
         _ => Ok(()),
     }
 }
@@ -1280,12 +1282,33 @@ async fn handle_runtime_stages_inner(
     }
 }
 
-fn handle_status<'a>(stream: &'a mut TcpStream, state: &'a MeshApi) -> BoxedRouteFuture<'a> {
-    Box::pin(handle_status_inner(stream, state))
+async fn status_for_caller(state: &MeshApi, trusted_local: bool) -> StatusPayload {
+    let mut status = state.status().await;
+    if !trusted_local {
+        status.token.clear();
+    }
+    status
 }
 
-async fn handle_status_inner(stream: &mut TcpStream, state: &MeshApi) -> anyhow::Result<()> {
-    match tokio::time::timeout(std::time::Duration::from_secs(5), state.status()).await {
+fn handle_status<'a>(
+    stream: &'a mut TcpStream,
+    state: &'a MeshApi,
+    trusted_local: bool,
+) -> BoxedRouteFuture<'a> {
+    Box::pin(handle_status_inner(stream, state, trusted_local))
+}
+
+async fn handle_status_inner(
+    stream: &mut TcpStream,
+    state: &MeshApi,
+    trusted_local: bool,
+) -> anyhow::Result<()> {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        status_for_caller(state, trusted_local),
+    )
+    .await
+    {
         Ok(status) => respond_json(stream, 200, &status).await,
         Err(_) => respond_error(stream, 503, "Status temporarily unavailable").await,
     }
@@ -1668,11 +1691,19 @@ async fn handle_unload_instance(
     Ok(())
 }
 
-fn handle_events<'a>(stream: &'a mut TcpStream, state: &'a MeshApi) -> BoxedRouteFuture<'a> {
-    Box::pin(handle_events_inner(stream, state))
+fn handle_events<'a>(
+    stream: &'a mut TcpStream,
+    state: &'a MeshApi,
+    trusted_local: bool,
+) -> BoxedRouteFuture<'a> {
+    Box::pin(handle_events_inner(stream, state, trusted_local))
 }
 
-async fn handle_events_inner(stream: &mut TcpStream, state: &MeshApi) -> anyhow::Result<()> {
+async fn handle_events_inner(
+    stream: &mut TcpStream,
+    state: &MeshApi,
+    trusted_local: bool,
+) -> anyhow::Result<()> {
     let request_id = super::super::management_lifecycle::response_request_id_header()
         .map(|request_id| format!("x-request-id: {request_id}\r\n"))
         .unwrap_or_default();
@@ -1682,7 +1713,7 @@ async fn handle_events_inner(stream: &mut TcpStream, state: &MeshApi) -> anyhow:
     stream.write_all(header.as_bytes()).await?;
     super::super::management_lifecycle::record_response_status(200);
 
-    let status = state.status().await;
+    let status = status_for_caller(state, trusted_local).await;
     let mut last_sent_json = None;
     if let Ok(json) = serde_json::to_string(&status) {
         stream
@@ -1716,7 +1747,7 @@ async fn handle_events_inner(stream: &mut TcpStream, state: &MeshApi) -> anyhow:
                         if !interesting {
                             continue;
                         }
-                        let status = state.status().await;
+                        let status = status_for_caller(state, trusted_local).await;
                         let Ok(json) = serde_json::to_string(&status) else {
                             continue;
                         };

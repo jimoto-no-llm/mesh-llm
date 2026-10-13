@@ -58,6 +58,7 @@ const VALUE_TAKING_FLAGS: &[&str] = &[
     "--speculative-verify-window-runahead-tokens",
     "--model",
     "--gguf",
+    "--image-endpoint",
     "--mmproj",
     "--checkpoint-quantization",
     "--quant",

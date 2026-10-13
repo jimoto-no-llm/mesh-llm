@@ -131,15 +131,20 @@ pub(crate) struct InboundGossip {
 pub(crate) async fn write_gossip_payload(
     send: &mut iroh::endpoint::SendStream,
     protocol: ControlProtocol,
-    outbound: &OutboundGossip,
+    outbound: OutboundGossip,
     sender_id: EndpointId,
     own_plugin_keys: &[crate::proto::node::PluginKey],
 ) -> Result<()> {
     let _ = protocol;
-    let mut frame = build_gossip_frame(&outbound.announcements, sender_id);
+    let OutboundGossip {
+        announcements,
+        signed_records,
+        signed_cache_affinity,
+    } = outbound;
+    let mut frame = build_gossip_frame(&announcements, sender_id);
     attach_own_plugin_keys(&mut frame, own_plugin_keys);
-    frame.signed_records = outbound.signed_records.clone();
-    frame.signed_cache_affinity = outbound.signed_cache_affinity.clone();
+    frame.signed_records = signed_records;
+    frame.signed_cache_affinity = signed_cache_affinity;
     write_len_prefixed(send, &frame.encode_to_vec()).await?;
     Ok(())
 }
@@ -166,31 +171,13 @@ pub(crate) type GossipWithPluginKeys = (
     Vec<crate::mesh::plugin_keys::BoundPluginKey>,
 );
 
-/// [`decode_gossip_frame`], plus the plugin keys on the sender's own entry
+/// Decoded gossip announcements, plus the plugin keys on the sender's own entry
 /// whose binding verifies against the sender's node key.
 pub(crate) fn decode_gossip_frame_and_plugin_keys(
     protocol: ControlProtocol,
     remote: EndpointId,
     buf: &[u8],
 ) -> Result<(InboundGossip, Vec<crate::mesh::plugin_keys::BoundPluginKey>)> {
-    let inbound = decode_gossip_frame(protocol, remote, buf)?;
-    // The frame decoded and validated above; read the sender's own entry again.
-    let frame = crate::proto::node::GossipFrame::decode(buf)
-        .map_err(|e| anyhow::anyhow!("gossip decode from {}: {e}", remote.fmt_short()))?;
-    let keys = frame
-        .peers
-        .iter()
-        .find(|peer| peer.endpoint_id.as_slice() == remote.as_bytes())
-        .map(|own| crate::mesh::plugin_keys::verified_from_proto(&remote, &own.plugin_keys))
-        .unwrap_or_default();
-    Ok((inbound, keys))
-}
-
-pub(crate) fn decode_gossip_frame(
-    protocol: ControlProtocol,
-    remote: EndpointId,
-    buf: &[u8],
-) -> Result<InboundGossip> {
     let _ = protocol;
     let frame = crate::proto::node::GossipFrame::decode(buf)
         .map_err(|e| anyhow::anyhow!("gossip decode from {}: {e}", remote.fmt_short()))?;
@@ -203,15 +190,34 @@ pub(crate) fn decode_gossip_frame(
             remote.fmt_short()
         );
     }
-    Ok(InboundGossip {
-        announcements: frame
-            .peers
-            .iter()
-            .filter_map(proto_ann_to_local)
-            .collect::<Vec<_>>(),
-        signed_records: frame.signed_records,
-        signed_cache_affinity: frame.signed_cache_affinity,
-    })
+    let keys = frame
+        .peers
+        .iter()
+        .find(|peer| peer.endpoint_id.as_slice() == remote.as_bytes())
+        .map(|own| crate::mesh::plugin_keys::verified_from_proto(&remote, &own.plugin_keys))
+        .unwrap_or_default();
+    let announcements = frame
+        .peers
+        .iter()
+        .filter_map(proto_ann_to_local)
+        .collect::<Vec<_>>();
+    Ok((
+        InboundGossip {
+            announcements,
+            signed_records: frame.signed_records,
+            signed_cache_affinity: frame.signed_cache_affinity,
+        },
+        keys,
+    ))
+}
+
+#[cfg(test)]
+pub(crate) fn decode_gossip_frame(
+    protocol: ControlProtocol,
+    remote: EndpointId,
+    buf: &[u8],
+) -> Result<InboundGossip> {
+    Ok(decode_gossip_frame_and_plugin_keys(protocol, remote, buf)?.0)
 }
 
 #[cfg(test)]

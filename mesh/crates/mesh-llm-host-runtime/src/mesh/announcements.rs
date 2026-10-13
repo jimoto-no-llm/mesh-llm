@@ -76,13 +76,14 @@ impl Node {
     )]
     pub(crate) async fn snapshot_local_announcement_data(&self) -> LocalAnnouncementData {
         let owner_summary = self.owner_summary.lock().await.clone();
-        let plugin_models = self.plugin_inference_models().await;
+        let mut external_models = self.plugin_inference_models().await;
+        external_models.extend(self.image_endpoint_models());
         let mut models = self.models.lock().await.clone();
-        append_external_inference_models(&mut models, &plugin_models);
+        append_external_inference_models(&mut models, &external_models);
         let mut serving_models = self.serving_models.lock().await.clone();
-        append_external_inference_models(&mut serving_models, &plugin_models);
+        append_external_inference_models(&mut serving_models, &external_models);
         let mut hosted_models = self.hosted_models.lock().await.clone();
-        append_external_inference_models(&mut hosted_models, &plugin_models);
+        append_external_inference_models(&mut hosted_models, &external_models);
         let activity_advertisement = self
             .activity_policy_guard
             .advertisement_decision(self.public_mesh);
@@ -140,7 +141,7 @@ impl Node {
             direct_admission_proof,
             available_model_metadata: Vec::new(),
             available_model_sizes: HashMap::new(),
-            served_model_descriptors: self.served_model_descriptors.lock().await.clone(),
+            served_model_descriptors: self.served_model_descriptors().await,
             served_model_runtime: self.model_runtime_descriptors.lock().await.clone(),
             owner_attestation: self.owner_attestation.lock().await.clone(),
             artifact_transfer_supported:

@@ -440,6 +440,7 @@ impl Node {
         for s in &my_hosted_models {
             served.insert(s.clone());
         }
+        served.extend(self.image_endpoint_models());
         for peer in &peer_data {
             for m in http_routable_models(peer) {
                 served.insert(m.clone());
@@ -579,6 +580,19 @@ impl Node {
             .values()
             .filter(|peer| peer.is_admitted())
             .cloned()
+            .collect()
+    }
+
+    /// Short id and advertised hostname of each admitted peer, for reporting
+    /// membership changes without cloning every `PeerInfo`.
+    pub(crate) async fn admitted_peer_labels(&self) -> Vec<(String, Option<String>)> {
+        self.state
+            .lock()
+            .await
+            .peers
+            .values()
+            .filter(|peer| peer.is_admitted())
+            .map(|peer| (peer.id.fmt_short().to_string(), peer.hostname.clone()))
             .collect()
     }
 

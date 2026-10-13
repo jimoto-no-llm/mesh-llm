@@ -42,6 +42,9 @@ pub struct RuntimeOptions {
     pub mesh_discovery_mode: MeshDiscoveryMode,
     pub model: Vec<PathBuf>,
     pub gguf: Vec<PathBuf>,
+    /// `--image-endpoint` `(NAME, URL)` pairs: running image generation
+    /// servers this node shares with the mesh.
+    pub image_endpoints: Vec<(String, String)>,
     pub mmproj: Option<PathBuf>,
     pub checkpoint_quantization: Option<String>,
     pub checkpoint_imatrix: Option<PathBuf>,
@@ -135,6 +138,7 @@ impl Default for RuntimeOptions {
             mesh_discovery_mode: MeshDiscoveryMode::Nostr,
             model: Vec::new(),
             gguf: Vec::new(),
+            image_endpoints: Vec::new(),
             mmproj: None,
             checkpoint_quantization: None,
             checkpoint_imatrix: None,

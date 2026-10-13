@@ -11,6 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = ROOT / "skippy" / "scripts" / "package-native-runtime.sh"
+ENSURE_PACKAGING_LIB = ROOT / "scripts" / "lib" / "ensure-packaging-tools.sh"
 
 
 def write_failing_nvcc(path: Path) -> None:
@@ -292,6 +293,43 @@ class PackageNativeRuntimeTests(unittest.TestCase):
             )
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_packaging_tools_checked_before_native_build(self) -> None:
+        script = SCRIPT.read_text(encoding="utf-8")
+        check = script.index('ensure_packaging_tools "$(target_runtime_os "$TARGET_TRIPLE")"')
+        prepare = script.index('"$SCRIPT_DIR/prepare-llama.sh"')
+        self.assertLess(check, prepare)
+        self.assertIn(
+            'source "$SCRIPT_DIR/lib/ensure-packaging-tools.sh"', script
+        )
+
+    def test_missing_patchelf_fails_fast_with_guidance(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            harness = (
+                "set -euo pipefail\n"
+                f'source "{ENSURE_PACKAGING_LIB}"\n'
+                "ensure_packaging_tools linux\n"
+            )
+            missing = subprocess.run(
+                ["/bin/bash", "-s"],
+                input=harness,
+                env={"PATH": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("patchelf", missing.stderr)
+            self.assertIn("just bootstrap-build-tools", missing.stderr)
+            windows = subprocess.run(
+                ["/bin/bash", "-s"],
+                input=harness.replace("linux", "windows"),
+                env={"PATH": directory},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(windows.returncode, 0, windows.stderr)
 
     def test_model_package_tool_keeps_repository_cargo_defaults(self) -> None:
         script = SCRIPT.read_text(encoding="utf-8")

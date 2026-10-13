@@ -21,8 +21,9 @@ serde_json = { workspace = true }
 skippy-cache = { path = "../skippy-cache", version = "0.78.0" }
 
 [lints.clippy]
-# Hot-loop discipline for the per-iteration path; CI denies warnings.
-perf = "warn"
+# Hot-loop discipline for the per-iteration path; denied so it gates even
+# without `-D warnings`.
+perf = "deny"
 
 [[bench]]
 name = "scheduler_lab"

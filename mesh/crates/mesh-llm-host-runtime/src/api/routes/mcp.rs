@@ -10,8 +10,9 @@ pub(super) async fn handle(
     stream: &mut TcpStream,
     state: &MeshApi,
     raw_request: &[u8],
+    body: &str,
 ) -> anyhow::Result<()> {
-    let request = match parse_request(raw_request) {
+    let request = match parse_request(raw_request, body.as_bytes()) {
         Ok(request) => request,
         Err(err) => {
             respond_error(stream, 400, &err.to_string()).await?;
@@ -26,11 +27,11 @@ pub(super) async fn handle(
     write_response(stream, response).await
 }
 
-fn parse_request(raw_request: &[u8]) -> anyhow::Result<http::Request<Full<Bytes>>> {
+fn parse_request(raw_request: &[u8], body: &[u8]) -> anyhow::Result<http::Request<Full<Bytes>>> {
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut parsed = httparse::Request::new(&mut headers);
-    let header_len = match parsed.parse(raw_request)? {
-        httparse::Status::Complete(header_len) => header_len,
+    match parsed.parse(raw_request)? {
+        httparse::Status::Complete(_) => {}
         httparse::Status::Partial => anyhow::bail!("Incomplete HTTP request"),
     };
 
@@ -41,12 +42,18 @@ fn parse_request(raw_request: &[u8]) -> anyhow::Result<http::Request<Full<Bytes>
         .uri(path)
         .version(http_version(parsed.version));
     for header in parsed.headers.iter() {
+        if header.name.eq_ignore_ascii_case("transfer-encoding")
+            || header.name.eq_ignore_ascii_case("content-length")
+        {
+            continue;
+        }
         builder = builder.header(header.name, header.value);
     }
+    // Full contains decoded payload bytes, so its framing headers must describe
+    // that body rather than the original chunked wire representation.
     builder
-        .body(Full::new(Bytes::copy_from_slice(
-            &raw_request[header_len..],
-        )))
+        .header(http::header::CONTENT_LENGTH, body.len())
+        .body(Full::new(Bytes::copy_from_slice(body)))
         .map_err(Into::into)
 }
 
