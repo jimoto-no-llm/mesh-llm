@@ -20,7 +20,15 @@ if ! git rev-parse --verify --quiet "$base" >/dev/null; then
     exit 2
 fi
 
-changed="$(git diff --name-only "$base"...HEAD)"
+# Compare the whole worktree against the base, not just committed history, so
+# an author can run this before committing and see the crate list they are about
+# to touch. Untracked files count too: new tests belong to their crate.
+changed="$(
+    {
+        git diff --name-only "$base"
+        git ls-files --others --exclude-standard
+    } | sort -u
+)"
 if [[ -z "$changed" ]]; then
     echo "check-pr: no changed files against $base; nothing to check"
     exit 0
