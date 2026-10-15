@@ -79,6 +79,10 @@ pub(crate) struct SplitCoordinatorObservation {
     pub(crate) elected_at_unix_ms: u64,
 }
 
+/// API URL, console URL, API port and console port advertised by the
+/// `RuntimeReady` output event.
+type RuntimeReadyEndpoints = (String, Option<String>, u16, Option<u16>);
+
 #[derive(Clone)]
 pub struct Node {
     pub(crate) endpoint: Endpoint,
@@ -129,6 +133,12 @@ pub struct Node {
     pub(crate) join_targets: Arc<Mutex<Vec<EndpointAddr>>>,
     pub(crate) first_joined_mesh_ts: Arc<Mutex<Option<u64>>>,
     pub(crate) accepting: Arc<(tokio::sync::Notify, std::sync::atomic::AtomicBool)>,
+    /// API and console endpoints to publish in `RuntimeReady`, recorded at
+    /// startup. A stage-1 node never runs its own model startup, so it learns
+    /// that it is serving only from an accepted remote stage load.
+    pub(crate) runtime_ready_endpoints: Arc<std::sync::Mutex<Option<RuntimeReadyEndpoints>>>,
+    /// One-shot guard so the ready event is emitted at most once per process.
+    pub(crate) runtime_ready_published: Arc<std::sync::atomic::AtomicBool>,
     /// Accelerator-resident capacity advertised to peers and split placement.
     pub(crate) vram_bytes: u64,
     /// Local fit budget, which may additionally include CPU offload memory.
@@ -873,6 +883,8 @@ impl Node {
                 tokio::sync::Notify::new(),
                 std::sync::atomic::AtomicBool::new(false),
             )),
+            runtime_ready_endpoints: Arc::new(std::sync::Mutex::new(None)),
+            runtime_ready_published: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             vram_bytes: hardware.vram_bytes,
             local_runtime_capacity_bytes: hardware.local_runtime_capacity_bytes,
             host_ram_offload_gain_bytes: hardware.host_ram_offload_gain_bytes,
@@ -1059,6 +1071,8 @@ impl Node {
                 tokio::sync::Notify::new(),
                 std::sync::atomic::AtomicBool::new(false),
             )),
+            runtime_ready_endpoints: Arc::new(std::sync::Mutex::new(None)),
+            runtime_ready_published: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             vram_bytes: 0,
             local_runtime_capacity_bytes: 0,
             host_ram_offload_gain_bytes: 0,
@@ -1313,6 +1327,50 @@ impl Node {
         if self.split_coordinator.lock().await.take().is_some() {
             super::split_assignment::publish_split_assignment_cleared();
         }
+    }
+
+    /// Record the endpoints a `RuntimeReady` event should advertise. Called once
+    /// during startup, next to the dashboard/console wiring.
+    pub(crate) fn set_runtime_ready_endpoints(
+        &self,
+        api_url: String,
+        console_url: Option<String>,
+        api_port: u16,
+        console_port: Option<u16>,
+    ) {
+        if let Ok(mut endpoints) = self.runtime_ready_endpoints.lock() {
+            *endpoints = Some((api_url, console_url, api_port, console_port));
+        }
+    }
+
+    /// Publish `RuntimeReady` once for a node that started serving a stage it did
+    /// not load itself. A split worker learns this only from an accepted remote
+    /// stage load, so its own startup loop never reaches the readiness reporter;
+    /// without this the TUI stays on the startup screen forever.
+    pub(crate) fn publish_runtime_ready_for_served_stage(&self) {
+        let endpoints = self
+            .runtime_ready_endpoints
+            .lock()
+            .ok()
+            .and_then(|endpoints| endpoints.clone());
+        let Some((api_url, console_url, api_port, console_port)) = endpoints else {
+            return;
+        };
+        if self
+            .runtime_ready_published
+            .swap(true, std::sync::atomic::Ordering::SeqCst)
+        {
+            return;
+        }
+        let _ = mesh_llm_events::emit_event(mesh_llm_events::OutputEvent::RuntimeReady {
+            api_url,
+            console_url,
+            api_port,
+            console_port,
+            models_count: Some(1),
+            pi_command: None,
+            goose_command: None,
+        });
     }
 
     #[cfg(test)]

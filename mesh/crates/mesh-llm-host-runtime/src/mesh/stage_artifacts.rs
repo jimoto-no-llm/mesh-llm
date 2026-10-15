@@ -157,6 +157,11 @@ impl Node {
             crate::inference::skippy::StageControlRequest::Stop(stop) => Some(stop.clone()),
             _ => None,
         };
+        let is_stage_load = matches!(
+            request,
+            crate::inference::skippy::StageControlRequest::Load(_)
+                | crate::inference::skippy::StageControlRequest::LoadLocal(_)
+        );
         let response = match control_tx {
             Some(tx) => {
                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
@@ -176,6 +181,17 @@ impl Node {
         {
             self.stop_stage_transport_bridge(&stop.topology_id, &stop.run_id, &stop.stage_id)
                 .await;
+        }
+        // A stage-1 node receives its stage from the coordinator rather than
+        // from its own startup loop, so an accepted load is the only signal that
+        // it is now serving. Publish readiness once for the TUI.
+        if is_stage_load
+            && matches!(
+                &response,
+                crate::inference::skippy::StageControlResponse::Ready(ready) if ready.accepted
+            )
+        {
+            self.publish_runtime_ready_for_served_stage();
         }
         Ok(response)
     }

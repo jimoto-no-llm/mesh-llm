@@ -945,6 +945,10 @@ pub(super) async fn start_run_auto_node_and_plugins(
         options,
     )))
     .await;
+    // A split worker never runs its own model startup, so its readiness is
+    // published from the accepted stage load. Record the endpoints that event
+    // should advertise while the ports are in scope.
+    record_runtime_ready_endpoints(&node, options.port, Some(options.console));
     node.start_accepting();
     node.set_display_name(node_display_name(options, &node))
         .await;
@@ -1732,6 +1736,18 @@ pub(super) async fn run_auto(ctx: RunAutoContext) -> Result<()> {
     let result = run_auto_inner(ctx, &mut runtime_event_stack).await;
     cleanup_run_auto_runtime_event_stack(&mut runtime_event_stack).await;
     result
+}
+
+/// Record the endpoints a `RuntimeReady` event should advertise. A split worker
+/// never runs its own model startup, so it publishes readiness from the accepted
+/// stage load instead of from the startup readiness reporter.
+fn record_runtime_ready_endpoints(node: &mesh::Node, api_port: u16, console_port: Option<u16>) {
+    node.set_runtime_ready_endpoints(
+        format!("http://127.0.0.1:{api_port}"),
+        console_port.map(|port| format!("http://127.0.0.1:{port}")),
+        api_port,
+        console_port,
+    );
 }
 
 #[expect(

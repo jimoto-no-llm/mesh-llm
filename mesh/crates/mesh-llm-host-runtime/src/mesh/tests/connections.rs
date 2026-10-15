@@ -411,6 +411,8 @@ async fn make_test_node_with_requirements(
             tokio::sync::Notify::new(),
             std::sync::atomic::AtomicBool::new(false),
         )),
+        runtime_ready_endpoints: Arc::new(std::sync::Mutex::new(None)),
+        runtime_ready_published: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         vram_bytes: 64 * 1024 * 1024 * 1024,
         local_runtime_capacity_bytes: 64 * 1024 * 1024 * 1024,
         host_ram_offload_gain_bytes: 0,

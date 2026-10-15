@@ -179,3 +179,65 @@ async fn stage_stop_clears_split_coordinator_when_no_bridges_remain() -> Result<
     );
     Ok(())
 }
+
+#[derive(Default)]
+struct RecordingReadySink(std::sync::Mutex<Vec<mesh_llm_events::OutputEvent>>);
+
+impl mesh_llm_events::OutputSink for RecordingReadySink {
+    fn emit_event(&self, event: mesh_llm_events::OutputEvent) -> std::io::Result<()> {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(event);
+        Ok(())
+    }
+}
+
+impl RecordingReadySink {
+    fn ready_count(&self) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .filter(|event| matches!(event, mesh_llm_events::OutputEvent::RuntimeReady { .. }))
+            .count()
+    }
+}
+
+struct ReadySinkResetGuard;
+
+impl Drop for ReadySinkResetGuard {
+    fn drop(&mut self) {
+        mesh_llm_events::clear_output_sink();
+    }
+}
+
+#[tokio::test]
+#[serial_test::serial]
+async fn served_stage_publishes_runtime_ready_exactly_once() -> Result<()> {
+    let _guard = ReadySinkResetGuard;
+    let sink = std::sync::Arc::new(RecordingReadySink::default());
+    mesh_llm_events::set_output_sink(sink.clone());
+
+    let node = Node::new_for_tests(NodeRole::Worker).await?;
+
+    // Without recorded endpoints there is nothing to advertise yet.
+    node.publish_runtime_ready_for_served_stage();
+    assert_eq!(sink.ready_count(), 0);
+
+    node.set_runtime_ready_endpoints(
+        "http://127.0.0.1:9337".to_string(),
+        Some("http://127.0.0.1:3131".to_string()),
+        9337,
+        Some(3131),
+    );
+    node.publish_runtime_ready_for_served_stage();
+    node.publish_runtime_ready_for_served_stage();
+
+    assert_eq!(
+        sink.ready_count(),
+        1,
+        "a served split stage must publish readiness exactly once"
+    );
+    Ok(())
+}
