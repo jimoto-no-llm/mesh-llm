@@ -293,7 +293,10 @@ impl SkippyRuntimeHandle {
     }
 
     pub fn status(&self) -> EmbeddedRuntimeStatus {
-        let handle = self.status.lock().expect("runtime status lock poisoned");
+        let handle = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Captured {
             value: sessions,
             captured_at_unix_nanos: sessions_captured_at_unix_nanos,
@@ -321,7 +324,10 @@ impl SkippyRuntimeHandle {
         self.tokenizer_active.store(false, Ordering::Release);
         let runtime = lock_runtime(&self.runtime);
         drop(runtime);
-        let mut status = self.status.lock().expect("runtime status lock poisoned");
+        let mut status = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if status.state == EmbeddedState::Stopped {
             return;
         }
@@ -360,7 +366,10 @@ struct ServerHandleState {
 
 impl EmbeddedServerHandle {
     pub fn status(&self) -> EmbeddedServerStatus {
-        let status = self.status.lock().expect("server status lock poisoned");
+        let status = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         EmbeddedServerStatus {
             name: status.name,
             bind_addr: status.bind_addr,
@@ -386,7 +395,10 @@ impl EmbeddedServerHandle {
         if let Some(task) = self.task.take() {
             task.abort();
         }
-        let mut status = self.status.lock().expect("server status lock poisoned");
+        let mut status = self
+            .status
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         status.state = EmbeddedState::Stopped;
         status.stopped_at_unix_nanos = Some(now_unix_nanos());
     }
@@ -442,7 +454,9 @@ fn spawn_openai_backend(bind_addr: SocketAddr, router: Router) -> EmbeddedServer
         let result = async {
             let listener = tokio::net::TcpListener::bind(bind_addr).await?;
             {
-                let mut status = task_status.lock().expect("server status lock poisoned");
+                let mut status = task_status
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
                 status.state = EmbeddedState::Ready;
             }
             axum::serve(listener, router)
@@ -551,7 +565,9 @@ fn publish_binary_stage_boundaries(
     input: Option<ActivationBoundaryDesc>,
     output: Option<ActivationBoundaryDesc>,
 ) {
-    let mut status = status.lock().expect("server status lock poisoned");
+    let mut status = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     status.input_activation_boundary = input;
     status.output_activation_boundary = output;
     status.state = EmbeddedState::Ready;
@@ -580,7 +596,9 @@ where
     let task_status = status.clone();
     let task = tokio::spawn(async move {
         {
-            let mut status = task_status.lock().expect("server status lock poisoned");
+            let mut status = task_status
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             status.state = EmbeddedState::Ready;
         }
         let result = serve(shutdown_rx).await;
@@ -595,7 +613,9 @@ where
 }
 
 fn finish_server_status(status: &Arc<Mutex<ServerHandleState>>, result: &Result<()>) {
-    let mut status = status.lock().expect("server status lock poisoned");
+    let mut status = status
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     status.stopped_at_unix_nanos = Some(now_unix_nanos());
     match result {
         Ok(()) => {
@@ -641,12 +661,17 @@ where
                 value,
                 captured_at_unix_nanos: now_unix_nanos(),
             };
-            *cache.lock().expect("stats cache lock poisoned") = captured.clone();
+            *cache
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = captured.clone();
             captured
         }
         // Inference holds the runtime: serve the last published snapshot,
         // carrying the time it was taken, instead of blocking.
-        None => cache.lock().expect("stats cache lock poisoned").clone(),
+        None => cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone(),
     }
 }
 

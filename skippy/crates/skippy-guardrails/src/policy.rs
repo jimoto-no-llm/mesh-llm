@@ -74,7 +74,10 @@ impl GuardrailPolicyHandle {
     }
 
     pub fn update(&self, policy: GuardrailPolicy) {
-        *self.inner.write().expect("guardrail policy lock poisoned") = policy;
+        *self
+            .inner
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = policy;
     }
 
     pub fn set_mode(&self, mode: GuardrailMode) {

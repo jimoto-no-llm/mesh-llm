@@ -53,7 +53,10 @@ impl Store {
     }
 
     fn init_schema(&self) -> Result<()> {
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS runs (
@@ -173,7 +176,10 @@ impl Store {
     }
 
     pub(crate) fn create_run(&self, run_id: &str, config: &Value) -> Result<()> {
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute(
             "INSERT INTO runs
              (run_id, started_at_unix_nanos, finished_at_unix_nanos, status, config_json)
@@ -185,12 +191,18 @@ impl Store {
     }
 
     fn ensure_run(&self, run_id: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         ensure_run_locked(&conn, run_id)
     }
 
     pub(crate) fn run_status(&self, run_id: &str) -> Result<RunStatusResponse> {
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let (status, started_at_unix_nanos, finished_at_unix_nanos) = conn.query_row(
             "SELECT status, started_at_unix_nanos, finished_at_unix_nanos
              FROM runs WHERE run_id = ?",
@@ -230,7 +242,10 @@ impl Store {
 
     pub(crate) fn finalize_run(&self, run_id: &str) -> Result<()> {
         self.refresh_stage_request_summaries(run_id)?;
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute(
             "UPDATE runs
              SET status = 'completed', finished_at_unix_nanos = ?
@@ -242,7 +257,10 @@ impl Store {
 
     pub(crate) fn report(&self, run_id: &str) -> Result<Report> {
         self.refresh_stage_request_summaries(run_id)?;
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let run = conn.query_row(
             "SELECT run_id, status, started_at_unix_nanos, finished_at_unix_nanos, config_json
              FROM runs WHERE run_id = ?",
@@ -302,7 +320,10 @@ impl Store {
             .map(|resource| attributes_to_json(&resource.attributes))
             .unwrap_or_else(|| Value::Object(Map::new()));
 
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute_batch("BEGIN TRANSACTION")?;
         let result = (|| -> Result<()> {
             for scope_spans in resource_spans.scope_spans {
@@ -510,7 +531,10 @@ impl Store {
             String::new()
         };
         let ingest_id = generate_ingest_id("metric");
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute(
             "INSERT INTO metrics
              (ingest_id, run_id, received_at_unix_nanos, resource_metric_count, raw_json)
@@ -540,7 +564,10 @@ impl Store {
         } else {
             String::new()
         };
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute(
             "INSERT INTO logs
              (ingest_id, run_id, received_at_unix_nanos, resource_log_count, raw_json)
@@ -557,7 +584,10 @@ impl Store {
     }
 
     fn refresh_stage_request_summaries(&self, run_id: &str) -> Result<()> {
-        let conn = self.conn.lock().expect("metrics db lock poisoned");
+        let conn = self
+            .conn
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         conn.execute(
             "DELETE FROM stage_request_summaries WHERE run_id = ?",
             params![run_id],

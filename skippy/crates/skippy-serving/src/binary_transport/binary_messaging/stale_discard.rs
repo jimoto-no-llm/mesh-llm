@@ -38,7 +38,10 @@ impl StaleDiscardRegistry {
     }
 
     pub(super) fn record(&self, request_id: u64, session_id: u64, min_id: i32, max_id: i32) {
-        let mut requests = self.requests.lock().expect("stale discard lock poisoned");
+        let mut requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(entry) = requests
             .iter_mut()
             .find(|entry| entry.request_id == request_id && entry.session_id == session_id)
@@ -62,7 +65,10 @@ impl StaleDiscardRegistry {
     }
 
     pub(super) fn is_discarded(&self, request_id: u64, session_id: u64, window_id: i32) -> bool {
-        let requests = self.requests.lock().expect("stale discard lock poisoned");
+        let requests = self
+            .requests
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         requests
             .iter()
             .filter(|entry| entry.request_id == request_id && entry.session_id == session_id)
