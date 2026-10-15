@@ -60,7 +60,12 @@ impl StreamLifecycle {
     }
 
     pub(crate) fn capture_usage(&self, usage: &Usage) {
-        *self.usage.lock().expect("stream usage lock poisoned") = Some(usage.into());
+        // This runs for every upstream chunk on the streaming path. A poisoned
+        // lock must not cascade into a second panic, so recover the guard.
+        *self
+            .usage
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(usage.into());
     }
 
     pub(crate) fn record_exchange_id(&self, exchange_id: String) {
@@ -133,7 +138,10 @@ impl StreamLifecycle {
         if !self.claim_terminal() {
             return;
         }
-        let usage = *self.usage.lock().expect("stream usage lock poisoned");
+        let usage = *self
+            .usage
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(usage) = usage {
             self.observe(&InferenceLifecycleEvent::ResponseCompleted {
                 context: self.context.clone(),
