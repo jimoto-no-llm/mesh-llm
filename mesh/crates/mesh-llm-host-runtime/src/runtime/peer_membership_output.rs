@@ -1,9 +1,20 @@
 //! Mesh membership as `PeerJoined` / `PeerLeft` output events.
 //!
-//! The node signals admitted-peer changes on `peer_change_rx`. Diffing the
-//! admitted peers on each signal reports every path that adds or removes a
-//! peer, including removals that never emit a plugin `PeerDown` event, so the
-//! console and dashboard peer list follow the actual membership.
+//! The node signals on `peer_change_rx` every time the *admitted* peer set or a
+//! peer's serving state changes. Diffing the admitted peers on each signal
+//! therefore reports every admission and removal, including removals that never
+//! emit a plugin `PeerDown` event, so the console and dashboard peer list follow
+//! the actual membership.
+//!
+//! What is deliberately not a signal: a transitive announcement that only adds
+//! or refreshes a *mention*. `apply_accepted_transitive_peer` inserts such peers
+//! with `admitted = false` and never promotes them (`skippy`/`mesh` bridges carry
+//! no proof of life), so they are invisible to `admitted_peer_labels` and produce
+//! no `PeerJoined`. The promotion itself - a direct announcement for a peer that
+//! was previously only mentioned - does signal: `upsert_existing_direct_peer`
+//! returns the admitted count unconditionally and `publish_direct_peer_update`
+//! sends it. See `mesh-llm-membership` transitions tests for both halves of the
+//! contract.
 
 use std::collections::BTreeMap;
 
