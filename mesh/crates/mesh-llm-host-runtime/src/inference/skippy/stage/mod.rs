@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
+use iroh::EndpointId;
 use mesh_llm_skippy_adapter::readiness::{
     StageReadinessProbe, materialize_stage_bind_addr, parse_bind_addr,
     start_binary_stage_ready_probe,
@@ -81,11 +82,15 @@ fn spawn_stage_control_loop_with_state(mut state: StageControlState) -> StageCon
                 command = rx.recv() => {
                     let Some(command) = command else { break };
                     match command {
-                        StageControlCommand::Execute { request, resp } => {
+                        StageControlCommand::Execute {
+                            request,
+                            sender,
+                            resp,
+                        } => {
                             tokio::select! {
                                 biased;
                                 _ = &mut shutdown_rx => break,
-                                result = state.handle(request) => {
+                                result = state.handle(request, sender) => {
                                     let _ = resp.send(result);
                                 }
                             }
@@ -125,7 +130,11 @@ impl StageControlState {
         Ok(())
     }
 
-    async fn handle(&mut self, request: StageControlRequest) -> Result<StageControlResponse> {
+    async fn handle(
+        &mut self,
+        request: StageControlRequest,
+        sender: Option<EndpointId>,
+    ) -> Result<StageControlResponse> {
         match request {
             StageControlRequest::Claim(claim) => self
                 .claim(claim)
@@ -138,9 +147,10 @@ impl StageControlState {
                 load.local_source_required = true;
                 self.load(load).await.map(StageControlResponse::Ready)
             }
-            StageControlRequest::Stop(stop) => {
-                self.stop(stop).await.map(StageControlResponse::Ready)
-            }
+            StageControlRequest::Stop(stop) => self
+                .stop(stop, sender)
+                .await
+                .map(StageControlResponse::Ready),
             StageControlRequest::Status(filter) => {
                 Ok(StageControlResponse::Status(self.statuses(&filter)))
             }
@@ -398,7 +408,15 @@ impl StageControlState {
         })
     }
 
-    async fn stop(&mut self, stop: StageStopRequest) -> Result<StageReadyResponse> {
+    async fn stop(
+        &mut self,
+        stop: StageStopRequest,
+        sender: Option<EndpointId>,
+    ) -> Result<StageReadyResponse> {
+        // Local callers (no authenticated peer) always keep the ability to stop
+        // their own stage. A remote caller must be the coordinator that owns the
+        // accepted claim; a claim without a coordinator id predates the field
+        // (mixed-version mesh) and keeps the term/generation-only policy.
         let key = stage_key(&stop.topology_id, &stop.run_id, &stop.stage_id);
         let Some(existing) = self.stages.remove(&key) else {
             let status = stopped_status(&stop);
@@ -408,6 +426,15 @@ impl StageControlState {
                 error: None,
             });
         };
+        if !stop_sender_is_authorized(&existing.load, sender) {
+            let status = status_from_running(&existing);
+            self.stages.insert(key, existing);
+            return Ok(StageReadyResponse {
+                accepted: false,
+                status,
+                error: Some("stop sender is not the accepted coordinator".to_string()),
+            });
+        }
         if stop.coordinator_term < existing.load.coordinator_term {
             let current_term = existing.load.coordinator_term;
             let status = status_from_running(&existing);
@@ -502,6 +529,21 @@ impl StageStatusFilter {
 
 fn stage_key(topology_id: &str, run_id: &str, stage_id: &str) -> String {
     format!("{topology_id}\n{run_id}\n{stage_id}")
+}
+
+/// Whether a `Stop` for a running stage may be accepted.
+///
+/// A local caller (`None`) is the node stopping its own stage and is always
+/// allowed. A remote caller must match the coordinator id recorded on the
+/// accepted claim; when the claim predates that field the older
+/// term/generation-only policy still applies.
+fn stop_sender_is_authorized(load: &StageLoadRequest, sender: Option<EndpointId>) -> bool {
+    match sender {
+        None => true,
+        Some(sender) => load
+            .coordinator_id
+            .is_none_or(|coordinator| coordinator == sender),
+    }
 }
 
 fn current_time_unix_ms() -> u64 {

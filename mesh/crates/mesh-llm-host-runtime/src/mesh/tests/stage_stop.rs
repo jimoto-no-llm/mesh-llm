@@ -27,7 +27,7 @@ async fn respond_to_test_stage_stop(
     *node.stage_control_tx.lock().await = Some(tx);
     let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         tokio::join!(send_test_stage_stop(node, remote, stop), async {
-            let crate::inference::skippy::StageControlCommand::Execute { request, resp } =
+            let crate::inference::skippy::StageControlCommand::Execute { request, resp, .. } =
                 rx.recv().await.expect("stop command")
             else {
                 panic!("unexpected load validation");

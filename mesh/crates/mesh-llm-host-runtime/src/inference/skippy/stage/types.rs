@@ -1,4 +1,5 @@
 use anyhow::Result;
+use iroh::EndpointId;
 use skippy_protocol::{FlashAttentionType, LoadMode, StageDevice};
 use tokio::sync::oneshot;
 
@@ -6,6 +7,10 @@ use tokio::sync::oneshot;
 pub(crate) enum StageControlCommand {
     Execute {
         request: StageControlRequest,
+        /// Authenticated QUIC peer that sent this request, when it arrived over
+        /// the wire. Local callers pass `None`. A `Stop` is only accepted when
+        /// this matches the accepted claim's `coordinator_id`.
+        sender: Option<EndpointId>,
         resp: oneshot::Sender<Result<StageControlResponse>>,
     },
     ValidateLoad {

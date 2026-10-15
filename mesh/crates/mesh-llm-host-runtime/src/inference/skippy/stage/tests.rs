@@ -23,6 +23,7 @@ async fn stage_control_shutdown_closes_and_joins_the_control_loop() {
                     run_id: None,
                     stage_id: None,
                 }),
+                sender: None,
                 resp,
             })
             .is_err(),
@@ -617,7 +618,7 @@ async fn unavailable_native_runtime_rejects_remote_and_local_stage_loads() {
         StageControlRequest::Load(load_request()),
         StageControlRequest::LoadLocal(load_request()),
     ] {
-        let response = state.handle(request).await.unwrap();
+        let response = state.handle(request, None).await.unwrap();
         let StageControlResponse::Ready(response) = response else {
             panic!("load must return a readiness response");
         };
@@ -631,4 +632,25 @@ async fn unavailable_native_runtime_rejects_remote_and_local_stage_loads() {
         );
         assert!(state.stages.is_empty());
     }
+}
+
+#[test]
+fn stop_authorization_requires_the_accepted_coordinator() {
+    let coordinator = coordinator_id();
+    // `coordinator_id()` is a fixed test key, so a second peer needs its own seed.
+    let other = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[0x77; 32]).public());
+    assert_ne!(coordinator, other);
+    let mut load = load_request();
+
+    // A claim that predates the coordinator-id field keeps the old policy.
+    load.coordinator_id = None;
+    assert!(stop_sender_is_authorized(&load, None));
+    assert!(stop_sender_is_authorized(&load, Some(other)));
+
+    load.coordinator_id = Some(coordinator);
+    // Local callers stop their own stage.
+    assert!(stop_sender_is_authorized(&load, None));
+    assert!(stop_sender_is_authorized(&load, Some(coordinator)));
+    // A different authenticated peer must not stop someone else s stage.
+    assert!(!stop_sender_is_authorized(&load, Some(other)));
 }

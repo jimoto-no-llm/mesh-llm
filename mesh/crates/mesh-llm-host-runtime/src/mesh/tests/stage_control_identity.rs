@@ -72,6 +72,7 @@ async fn stage_coordinator_identity_accepts_matching_claims_and_higher_terms() -
             let StageControlCommand::Execute {
                 request: StageControlRequest::Claim(claim),
                 resp,
+                ..
             } = rx.recv().await.unwrap()
             else {
                 panic!("expected coordinator claim");
@@ -179,6 +180,7 @@ async fn stage_coordinator_identity_keeps_operator_local_control() -> Result<()>
         let StageControlCommand::Execute {
             request: StageControlRequest::Claim(claim),
             resp,
+            ..
         } = rx.recv().await.unwrap()
         else {
             panic!("expected local coordinator claim");

@@ -892,6 +892,7 @@ impl Node {
         let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
         tx.send(crate::inference::skippy::StageControlCommand::Execute {
             request: crate::inference::skippy::StageControlRequest::Status(filter),
+            sender: None,
             resp: resp_tx,
         })
         .map_err(|_| anyhow::anyhow!("stage control loop is unavailable"))?;
@@ -925,7 +926,7 @@ impl Node {
             anyhow::bail!("stage control is not available");
         };
         let response = self
-            .execute_stage_control_request_with_sender(Some(tx), request)
+            .execute_stage_control_request_with_sender(Some(tx), request, None)
             .await?;
         drop(control_tx_guard);
         match &response {

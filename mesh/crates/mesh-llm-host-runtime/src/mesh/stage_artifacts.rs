@@ -147,6 +147,7 @@ impl Node {
             tokio::sync::mpsc::UnboundedSender<crate::inference::skippy::StageControlCommand>,
         >,
         request: crate::inference::skippy::StageControlRequest,
+        sender: Option<iroh::EndpointId>,
     ) -> anyhow::Result<crate::inference::skippy::StageControlResponse> {
         // Load can take minutes on large stages; use the same
         // per-request budget the remote sender uses instead of the short
@@ -161,6 +162,7 @@ impl Node {
                 let (resp_tx, resp_rx) = tokio::sync::oneshot::channel();
                 tx.send(crate::inference::skippy::StageControlCommand::Execute {
                     request,
+                    sender,
                     resp: resp_tx,
                 })
                 .map_err(|_| anyhow::anyhow!("stage control loop is unavailable"))?;
@@ -262,7 +264,11 @@ impl Node {
                     self.record_stage_load_topology(load).await;
                 }
                 match self
-                    .execute_stage_control_request_with_sender(control_tx, request.clone())
+                    .execute_stage_control_request_with_sender(
+                        control_tx,
+                        request.clone(),
+                        Some(remote),
+                    )
                     .await
                 {
                     Ok(response) => response,
