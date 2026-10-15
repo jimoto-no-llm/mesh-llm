@@ -184,27 +184,39 @@ impl InFlightTracker {
 
     /// Increment in-flight count. Returns the new count.
     pub(crate) fn increment(&self) -> u64 {
-        let mut guard = self.inner.lock().expect("inflight mutex poisoned");
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.count = guard.count.saturating_add(1);
         guard.count
     }
 
     /// Decrement in-flight count. Returns the new count (saturates at 0).
     pub(crate) fn decrement(&self) -> u64 {
-        let mut guard = self.inner.lock().expect("inflight mutex poisoned");
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.count = guard.count.saturating_sub(1);
         guard.count
     }
 
     /// Current in-flight count.
     pub(crate) fn get(&self) -> u64 {
-        let guard = self.inner.lock().expect("inflight mutex poisoned");
+        let guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.count
     }
 
     #[cfg(test)]
     fn set(&self, value: u64) {
-        let mut guard = self.inner.lock().expect("inflight mutex poisoned");
+        let mut guard = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         guard.count = value;
     }
 }

@@ -108,7 +108,10 @@ impl RuntimeCapacityLedger {
         &self,
         request: RuntimeCapacityRequest,
     ) -> Result<RuntimeCapacityReservation, RuntimeCapacityError> {
-        let mut state = self.inner.lock().expect("runtime capacity ledger poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let reserved_bytes = state
             .reservations
             .iter()
@@ -152,7 +155,10 @@ impl RuntimeCapacityLedger {
 
     #[cfg(test)]
     pub(super) fn used_bytes(&self, pool: &RuntimeCapacityPool) -> u64 {
-        let state = self.inner.lock().expect("runtime capacity ledger poisoned");
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state
             .reservations
             .values()
@@ -162,7 +168,10 @@ impl RuntimeCapacityLedger {
     }
 
     fn release_generation(&self, instance_id: &str, generation: u64) {
-        let mut state = self.inner.lock().expect("runtime capacity ledger poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let should_release = state
             .reservations
             .get(instance_id)
