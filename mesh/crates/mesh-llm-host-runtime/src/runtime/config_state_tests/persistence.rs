@@ -1,4 +1,5 @@
 use super::*;
+#[serial_test::serial]
 #[test]
 fn config_sync_load_malformed_nested_toml_still_errors() {
     let dir = test_dir();
@@ -25,6 +26,7 @@ temperature = 0.2
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_noop_apply_skips_disk_write() {
     let dir = test_dir();
@@ -103,6 +105,7 @@ fn config_sync_noop_apply_skips_disk_write() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_telemetry_only_change_is_persisted_locally() {
     let dir = test_dir();
@@ -185,6 +188,7 @@ fn config_sync_sidecar_migration_fallback() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_apply_persists_integrated_fixture_sections_and_hashes_changes() {
     let dir = test_dir();

@@ -1,4 +1,5 @@
 use super::*;
+#[serial_test::serial]
 #[test]
 fn retention_and_replay_logging_changes_remain_staged_without_restart() {
     let dir = test_dir();
@@ -136,6 +137,7 @@ fn dynamic_limit_change_combined_with_static_change_stays_restart_required() {
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn dynamic_logging_change_does_not_mask_later_nested_static_change() {
     let dir = test_dir();
@@ -164,6 +166,7 @@ fn dynamic_logging_change_does_not_mask_later_nested_static_change() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn static_logging_changes_return_restart_required_from_config_state() {
     let dir = test_dir();

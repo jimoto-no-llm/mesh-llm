@@ -1,4 +1,5 @@
 use super::*;
+#[serial_test::serial]
 #[test]
 fn config_sync_state_load() {
     let dir = test_dir();
@@ -18,6 +19,7 @@ fn config_sync_state_load() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_apply_success() {
     let dir = test_dir();
@@ -52,6 +54,7 @@ fn config_sync_state_apply_success() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_apply_preserves_additive_defaults_sections() {
     let dir = test_dir();
@@ -130,6 +133,7 @@ reasoning_format = "qwen"
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_conflict() {
     let dir = test_dir();
@@ -154,6 +158,7 @@ fn config_sync_state_conflict() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn prepared_apply_keeps_config_and_hash_atomic_until_persistence_completes() {
     let dir = test_dir();
@@ -196,6 +201,7 @@ fn prepared_apply_keeps_config_and_hash_atomic_until_persistence_completes() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn finish_apply_rejects_a_pending_revision_after_another_apply_wins() {
     let dir = test_dir();
@@ -225,6 +231,7 @@ fn finish_apply_rejects_a_pending_revision_after_another_apply_wins() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_concurrent_applies() {
     let dir = test_dir();
@@ -251,6 +258,7 @@ fn config_sync_state_concurrent_applies() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_revision_monotonic() {
     let dir = test_dir();
@@ -300,6 +308,7 @@ fn config_sync_state_revision_monotonic() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_hash_changes_on_different_config() {
     let dir = test_dir();
@@ -348,6 +357,7 @@ fn config_sync_state_hash_changes_on_different_config() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_state_apply_preserves_nested_sections_and_updates_hash() {
     let dir = test_dir();
@@ -403,6 +413,7 @@ fn config_sync_state_apply_preserves_nested_sections_and_updates_hash() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_load_propagates_invalid_toml_error() {
     let dir = test_dir();
@@ -413,6 +424,7 @@ fn config_sync_load_propagates_invalid_toml_error() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn config_sync_load_nested_validation_error_is_stable() {
     let dir = test_dir();

@@ -1,4 +1,5 @@
 use super::*;
+#[serial_test::serial]
 #[test]
 fn runtime_config_diagnostics_transport() {
     let dir = test_dir();
@@ -179,6 +180,7 @@ unknown = true
     );
 }
 
+#[serial_test::serial]
 #[test]
 fn runtime_config_apply_accepts_schema_driven_valid_fixture() {
     let dir = test_dir();
@@ -195,6 +197,7 @@ fn runtime_config_apply_accepts_schema_driven_valid_fixture() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+#[serial_test::serial]
 #[test]
 fn runtime_config_apply_matches_validator_signatures_for_schema_driven_invalid_fixture() {
     let dir = test_dir();
