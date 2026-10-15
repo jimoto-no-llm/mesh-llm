@@ -1139,6 +1139,25 @@ pub enum Command {
         #[arg(long)]
         write: bool,
     },
+    /// Launch rustdsh (rdsh) with mesh-llm as an OpenAI-compatible provider.
+    ///
+    /// Registers the local mesh via `rdsh provider add` and then launches rdsh.
+    /// If no mesh is running on --port, this auto-joins the mesh as a client.
+    #[command(name = "rdsh")]
+    Rdsh {
+        /// Model id to declare on the mesh provider (default: auto = mesh picks best)
+        #[arg(long)]
+        model: Option<String>,
+        /// API port for mesh-llm (default: 9337)
+        #[arg(long, default_value = "9337")]
+        port: u16,
+        /// rdsh profile to register the provider in (default: rdsh's own default)
+        #[arg(long)]
+        profile: Option<String>,
+        /// Register the mesh provider and exit without launching rdsh.
+        #[arg(long)]
+        write: bool,
+    },
     /// Add a Mesh provider to Hermes config without launching it.
     Hermes(crate::agent_config::AgentConfigArgs),
     /// Add a Mesh provider to OpenClaw config without launching it.

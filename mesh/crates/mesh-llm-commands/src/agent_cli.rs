@@ -388,6 +388,100 @@ fn opencode_missing_binary_guidance(
     ]
 }
 
+/// Register the local mesh as an OpenAI-compatible provider in rdsh, then launch it.
+pub async fn run_rdsh(
+    model: Option<String>,
+    port: u16,
+    profile: Option<&str>,
+    write: bool,
+) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+    let (models, chosen, mut mesh_child) = check_mesh(&client, port, &model).await?;
+
+    let result = run_rdsh_with_mesh(&models.names, &chosen, port, profile, write);
+
+    cleanup_mesh_child(&mut mesh_child);
+
+    result
+}
+
+fn run_rdsh_with_mesh(
+    model_names: &[String],
+    chosen: &str,
+    port: u16,
+    profile: Option<&str>,
+    write: bool,
+) -> Result<()> {
+    let base_url = format!("http://127.0.0.1:{port}/v1");
+    let mut err = mesh_llm_events::console_err();
+
+    // `provider add` merges explicit `--model` entries with `--discover`, so
+    // declaring the chosen id keeps a usable provider even when the local
+    // /v1/models probe is unavailable.
+    let mut add = Command::new("rdsh");
+    add.arg("provider")
+        .arg("add")
+        .arg("mesh")
+        .arg("--base-url")
+        .arg(&base_url)
+        .arg("--discover")
+        .arg("--no-key")
+        .arg("--replace")
+        .arg("--model")
+        .arg(chosen);
+    if let Some(profile) = profile {
+        add.arg("--profile").arg(profile);
+    }
+    match add.status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => anyhow::bail!("rdsh provider add failed with {status}"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            for line in rdsh_missing_binary_guidance(&base_url, chosen) {
+                writeln!(err, "{line}")?;
+            }
+            return Ok(());
+        }
+        Err(error) => return Err(error.into()),
+    }
+    writeln!(
+        err,
+        "✅ Registered mesh provider ({base_url}, {} models)",
+        model_names.len()
+    )?;
+
+    if write {
+        return Ok(());
+    }
+
+    writeln!(err, "🚀 Launching rdsh...")?;
+    let _ = err.flush();
+    let mut launch = Command::new("rdsh");
+    if let Some(profile) = profile {
+        launch.arg("--profile").arg(profile);
+    }
+    configure_interactive_stdio(&mut launch);
+    let status = launch.status()?;
+    if !status.success() {
+        anyhow::bail!("rdsh exited with {status}");
+    }
+    Ok(())
+}
+
+fn rdsh_missing_binary_guidance(base_url: &str, chosen: &str) -> Vec<String> {
+    vec![
+        "rdsh not found in PATH.".to_string(),
+        "Install rustdsh: https://github.com/jimoto-no-llm/rustdsh".to_string(),
+        "Or register the mesh provider manually:".to_string(),
+        format!(
+            "  rdsh provider add mesh --base-url {} --discover --no-key --replace --model {}",
+            shell::single_quote(base_url),
+            shell::single_quote(chosen)
+        ),
+    ]
+}
+
 fn pi_missing_binary_guidance(model_arg: &str) -> Vec<String> {
     vec![
         "pi not found in PATH.".to_string(),

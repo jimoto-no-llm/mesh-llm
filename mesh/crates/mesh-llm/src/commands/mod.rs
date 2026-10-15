@@ -172,7 +172,8 @@ async fn dispatch_general_command(cli: &Cli, cmd: &Command) -> Result<()> {
         Command::Goose { .. }
         | Command::Claude { .. }
         | Command::Pi { .. }
-        | Command::Opencode { .. } => dispatch_agent_command(cmd).await,
+        | Command::Opencode { .. }
+        | Command::Rdsh { .. } => dispatch_agent_command(cmd).await,
         Command::Skills { command } => mesh_llm_commands::skills::run_skills_command(command),
         Command::Plugin { command } => run_plugin_command(command, cli).await,
         Command::Benchmark { command } => {
@@ -200,6 +201,15 @@ async fn dispatch_agent_command(cmd: &Command) -> Result<()> {
         }
         Command::Opencode { model, host, write } => {
             mesh_llm_commands::agent_cli::run_opencode(model.clone(), host, *write).await
+        }
+        Command::Rdsh {
+            model,
+            port,
+            profile,
+            write,
+        } => {
+            mesh_llm_commands::agent_cli::run_rdsh(model.clone(), *port, profile.as_deref(), *write)
+                .await
         }
         _ => unreachable!("dispatch_agent_command called for non-agent command"),
     }

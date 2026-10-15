@@ -121,6 +121,16 @@ pub(super) fn format_command(command: &Command, assembly: &mut SummaryAssembly) 
         Command::Opencode { model, host, write } => {
             format_client("opencode", model, host, *write, assembly);
         }
+        Command::Rdsh {
+            model,
+            port,
+            profile,
+            write,
+        } => {
+            format_agent("rdsh", model, *port, assembly);
+            assembly.flag("profile", profile.is_some());
+            assembly.flag("write", *write);
+        }
         Command::Stop => assembly.command.push_str(" stop"),
         Command::Jimoto { json } => {
             assembly.command.push_str(" jimoto");

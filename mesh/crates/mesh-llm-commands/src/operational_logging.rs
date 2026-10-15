@@ -159,7 +159,8 @@ pub fn command_family(command: &Command) -> CliCommandFamily {
         | Command::Hermes(_)
         | Command::Openclaw(_)
         | Command::Pi { .. }
-        | Command::Opencode { .. } => CliCommandFamily::Agent,
+        | Command::Opencode { .. }
+        | Command::Rdsh { .. } => CliCommandFamily::Agent,
         Command::Plugin { .. } | Command::ExternalPlugin(_) => CliCommandFamily::Plugin,
         Command::Skills { .. } => CliCommandFamily::Skills,
         Command::Benchmark { .. } => CliCommandFamily::Benchmark,

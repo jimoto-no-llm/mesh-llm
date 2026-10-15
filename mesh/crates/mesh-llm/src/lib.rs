@@ -346,7 +346,7 @@ fn parse_failure_family(
             "doctor" | "jimoto" => Some(CliCommandFamily::Diagnostics),
             "discover" => Some(CliCommandFamily::Discovery),
             "rotate-key" | "auth" => Some(CliCommandFamily::Identity),
-            "goose" | "claude" | "hermes" | "openclaw" | "pi" | "opencode" => {
+            "goose" | "claude" | "hermes" | "openclaw" | "pi" | "opencode" | "rdsh" => {
                 Some(CliCommandFamily::Agent)
             }
             "plugins" | "plugin" => Some(CliCommandFamily::Plugin),
