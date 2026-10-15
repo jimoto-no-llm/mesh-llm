@@ -104,3 +104,9 @@ hooks-install:
 [unix]
 check-commits range="origin/main..HEAD":
     python3 scripts/check-conventional-commit.py --range "{{ range }}"
+
+# Minimum PR gate: fmt, clippy (warnings denied) and crate tests for the crates
+# this branch touches. Mirrors what a reviewer has to reproduce by hand.
+[unix]
+check-pr base="origin/main":
+    @scripts/check-pr.sh "{{ base }}"
