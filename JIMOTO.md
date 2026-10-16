@@ -32,9 +32,27 @@ just build
 
 | 環境 | 版 | 確認日 | 記録 |
 |---|---|---|---|
-| — | — | — | — |
+| Linux x86_64（Fedora 44, kernel 6.19） | 0.78.0 | 2026-10-16 | ビルドと CLI のみ（下記） |
+| macOS | — | — | 未取得 |
+| Windows | — | — | 未取得 |
 
-まだ記録はありません。動いたら Issue #52 に報告してください。
+### Linux x86_64（2026-10-16）
+
+検証した範囲:
+
+1. ビルド: `cargo build -p mesh-llm`（バックエンド非依存のホスト）が成功
+2. `./target/debug/mesh-llm --version` → `mesh-llm 0.78.0`
+3. `--help` に `serve` / `client` / `doctor` / `rdsh` などのサブコマンドが表示される
+4. `./target/debug/mesh-llm jimoto --json` がフォーク情報を返す
+5. `./target/debug/mesh-llm doctor split --help` が表示される
+6. テスト: `cargo test -p mesh-llm-host-runtime --lib` 全件通過、`cargo clippy --all-targets -- -D warnings` クリーン
+
+未検証（この環境では実行できない）:
+
+- `just build` によるネイティブランタイム込みのビルド。この環境には `just` と `sccache` が無いため、`cargo build`（ホストのみ）で代用しています
+- `mesh-llm setup` / `serve` / `join` と推論。ネイティブランタイムが無いため未実施です
+
+再現手順は上記のコマンドのとおりです。記録の追加・訂正は Issue #52 へお願いします。
 
 ## スマホで使う
 
