@@ -298,6 +298,12 @@ fn tier_aware_consensus_decision(
 /// Tokens that flip meaning. Always preserved as content (even if they'd
 /// fail the length / stopword filters), AND a leftover negation in either
 /// side of a comparison blocks clustering regardless of subset relation.
+///
+/// The comparison itself is language-agnostic (it compares token sets), so
+/// any language whose negations are missing here silently clusters an
+/// affirmative with its negation: "Das ist erlaubt." is a token subset of
+/// "Das ist nicht erlaubt." and clustered as agreement until German was
+/// listed.
 const NEGATION_TOKENS: &[&str] = &[
     // Standalone negations
     "no", "not", "never", "none", "nor", "without", "neither", "cannot",
@@ -308,6 +314,9 @@ const NEGATION_TOKENS: &[&str] = &[
     // is what survives because the `t` half is <3 chars and gets filtered).
     "don", "doesn", "didn", "won", "wouldn", "shouldn", "isn", "aren", "wasn", "weren", "hadn",
     "haven", "hasn",
+    // German negations ("Das ist nicht erlaubt." vs "Das ist erlaubt.").
+    "nicht", "kein", "keine", "keinen", "keiner", "keines", "niemand", "niemals", "nie", "nichts",
+    "ohne", "weder",
 ];
 
 /// Content-bearing tokens extracted from an answer payload.
@@ -618,6 +627,57 @@ mod tests {
         assert!(
             res.is_none(),
             "affirmative vs negated should not cluster, got {res:?}"
+        );
+    }
+
+    /// The token-subset heuristic is language-agnostic, so a negation the
+    /// guard list does not know about silently clusters an affirmative with
+    /// its negation. Recorded pair: "Das ist erlaubt." previously agreed
+    /// with "Das ist nicht erlaubt.".
+    #[test]
+    fn early_decision_german_negation_blocks_agreement() {
+        let outputs = vec![
+            make_output(OutputKind::Answer, 0.9, "Das ist erlaubt."),
+            make_output(OutputKind::Answer, 0.8, "Das ist nicht erlaubt."),
+        ];
+        let res = try_early_decision(&outputs, 3, outputs.len(), StrongGate::Off);
+        assert!(
+            res.is_none(),
+            "German affirmative vs negation must not be early consensus, got {res:?}"
+        );
+    }
+
+    /// Same pair on the full arbitration path: the affirmative must not be
+    /// shipped verbatim, and the two answers must not count as agreement.
+    #[test]
+    fn german_negation_blocks_full_arbitration() {
+        let outputs = vec![
+            make_output(OutputKind::Answer, 0.9, "Das ist erlaubt."),
+            make_output(OutputKind::Answer, 0.8, "Das ist nicht erlaubt."),
+        ];
+        match arbitrate(&outputs) {
+            Decision::NeedsReducer { reason } => assert!(
+                reason.contains("no agreement"),
+                "the disagreement should be named in the reducer reason; got {reason:?}"
+            ),
+            other => panic!("affirmative and negated answers must be synthesized, got {other:?}"),
+        }
+    }
+
+    /// A German affirmative pair still clusters: the new guard must not
+    /// break agreement detection in the same language.
+    #[test]
+    fn german_affirmative_pair_still_agrees() {
+        let outputs = vec![
+            make_output(OutputKind::Answer, 0.9, "Das ist erlaubt."),
+            make_output(OutputKind::Answer, 0.8, "Das ist auch erlaubt."),
+        ];
+        assert!(
+            matches!(
+                try_early_decision(&outputs, 3, outputs.len(), StrongGate::Off),
+                Some(Decision::Answer(_))
+            ),
+            "affirmative German answers still agree"
         );
     }
 
