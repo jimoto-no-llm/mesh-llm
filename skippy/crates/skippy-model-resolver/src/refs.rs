@@ -8,12 +8,12 @@ pub fn parse_hf_resolve_url(url: &str) -> Option<(String, Option<String>, String
         .strip_prefix("https://huggingface.co/")
         .or_else(|| url.strip_prefix("http://huggingface.co/"))?;
     let parts: Vec<&str> = tail.split('/').collect();
-    if parts.len() < 5 || parts.get(2) != Some(&"resolve") {
+    if parts.len() < 5 || parts.get(2) != Some(&"resolve") || parts[3].is_empty() {
         return None;
     }
     Some((
         format!("{}/{}", parts[0], parts[1]),
-        parts.get(3).map(|value| value.to_string()),
+        Some(parts[3].to_string()),
         parts[4..].join("/"),
     ))
 }
@@ -40,7 +40,7 @@ pub fn parse_huggingface_file_ref(input: &str) -> Option<(String, Option<String>
         Some((repo, revision)) => (repo, Some(revision.to_string())),
         None => (parts[1], None),
     };
-    if repo_tail.is_empty() {
+    if repo_tail.is_empty() || revision.as_deref() == Some("") {
         return None;
     }
     Some((
@@ -146,6 +146,15 @@ mod tests {
         assert_eq!(parsed.0, "org/repo");
         assert_eq!(parsed.1.as_deref(), Some("main"));
         assert_eq!(parsed.2, "subdir/model-Q4_K_M.gguf");
+    }
+
+    #[test]
+    fn rejects_empty_hf_resolve_revision() {
+        let url = "https://huggingface.co/org/repo/resolve//model.gguf";
+
+        assert_eq!(parse_hf_resolve_url(url), None);
+        assert_eq!(parse_huggingface_file_ref(url), None);
+        assert_eq!(parse_huggingface_file_ref("org/repo@/model.gguf"), None);
     }
 
     #[test]
