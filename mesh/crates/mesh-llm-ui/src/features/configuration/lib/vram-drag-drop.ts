@@ -42,9 +42,11 @@ export function isReservedLaneEvent(event: DragEvent<HTMLElement>) {
 }
 
 function encodeDragDataId(value: string): string {
-  return Array.from(value)
-    .map((character) => character.charCodeAt(0).toString(16).padStart(DRAG_ID_CHUNK_LENGTH, '0'))
-    .join('')
+  let encoded = ''
+  for (let index = 0; index < value.length; index += 1) {
+    encoded += value.charCodeAt(index).toString(16).padStart(DRAG_ID_CHUNK_LENGTH, '0')
+  }
+  return encoded
 }
 
 function decodeDragDataId(value: string): string {
