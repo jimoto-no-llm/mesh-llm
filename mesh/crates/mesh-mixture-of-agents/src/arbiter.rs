@@ -459,6 +459,14 @@ fn single_output_decision(output: &WorkerOutput) -> Decision {
         OutputKind::Uncertainty => Decision::NeedsReducer {
             reason: "single worker uncertain".into(),
         },
+        // A lone critique evaluates something the worker did not answer.
+        // Returning it verbatim ships commentary where the user asked for
+        // an answer, and it skips synthesis that the multi-output path
+        // already applies to critiques. Escalate it like any other
+        // critique; only a usable Answer may be the final answer.
+        OutputKind::Critique => Decision::NeedsReducer {
+            reason: "single worker returned only a critique".into(),
+        },
         _ => Decision::Answer(output.payload.clone()),
     }
 }
@@ -671,6 +679,48 @@ mod tests {
                 assert!(reason.contains("silent reply sentinel"));
             }
             other => panic!("expected reducer escalation, got {other:?}"),
+        }
+    }
+
+    // ── A critique is never the final answer ─────────────────────────
+
+    #[test]
+    fn sole_critique_goes_to_synthesis() {
+        let outputs = vec![make_output(
+            OutputKind::Critique,
+            0.9,
+            "The plan omits the second migration step.",
+        )];
+        match arbitrate(&outputs) {
+            Decision::NeedsReducer { reason } => assert!(
+                reason.contains("critique"),
+                "the failure reason should name the lone critique; got {reason:?}"
+            ),
+            other => panic!("a lone critique must not become the answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sole_surviving_critique_goes_to_synthesis() {
+        let outputs = vec![make_output(
+            OutputKind::Critique,
+            0.9,
+            "The plan omits the second migration step.",
+        )];
+        match try_early_decision(&outputs, 4, 4, StrongGate::Off) {
+            Some(Decision::NeedsReducer { .. }) => {}
+            other => panic!(
+                "the early-exit path must send a sole surviving critique to synthesis, got {other:?}"
+            ),
+        }
+    }
+
+    #[test]
+    fn sole_usable_answer_still_returns_verbatim() {
+        let outputs = vec![make_output(OutputKind::Answer, 0.6, "Use ripgrep.")];
+        match arbitrate(&outputs) {
+            Decision::Answer(text) => assert_eq!(text, "Use ripgrep."),
+            other => panic!("a usable single answer stays the answer, got {other:?}"),
         }
     }
 
