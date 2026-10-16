@@ -136,6 +136,19 @@ curl -s http://localhost:9337/v1/images/generations \
 - ラベルは `perf`・`skippy`・`scheduler`・`cache`・`maintenance`・`documentation`・`ci:canary` に加え、フォーク独自の `jimoto`・`upstream-sync`・`mobile` を使います。
 - Rust 変更は対象クレートの check・clippy（警告拒否）・関連テストが必須です。ホット4クレートと workspace には `clippy::perf` ゲートがあります。
 
+## 自動検証（CI）
+
+- PR を出すと GitHub Actions の `PR · Quality` などのワークフローが動きます（`pull_request` の opened / synchronize / reopened / ready_for_review / edited が対象）。実行状況はリポジトリの Actions タブ、または `gh run list --repo jimoto-no-llm/mesh-llm` で確認できます。
+- 手元で同じ最低限のゲートを先に回したい場合は次を使います。CI を待たずに落とせるものが分かります。
+
+  ```bash
+  just check-pr            # origin/main との差分から対象クレートを判定して fmt / clippy / test
+  just check-pr <base>     # 比較先を変える場合
+  ```
+
+  `just` が無い環境では `bash scripts/check-pr.sh origin/main` を直接実行してください。作業ツリーの未コミット変更と未追跡ファイルも対象に含まれます。
+- ネイティブランタイムを含むフルの CI はプラットフォーム別のレーン（`CI · Linux` / `CI · macOS` / `CI · Windows`）に分かれています。手動で流す場合は `gh workflow run "CI · Manual Full"` です。
+
 ## 上流への追従
 
 - 定期的に `Mesh-LLM/mesh-llm` の main を取り込みます。
