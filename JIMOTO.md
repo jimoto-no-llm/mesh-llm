@@ -138,8 +138,9 @@ curl -s http://localhost:9337/v1/images/generations \
 
 ## 自動検証（CI）
 
-- PR を出すと GitHub Actions の `PR · Quality` などのワークフローが動きます（`pull_request` の opened / synchronize / reopened / ready_for_review / edited が対象）。実行状況はリポジトリの Actions タブ、または `gh run list --repo jimoto-no-llm/mesh-llm` で確認できます。
-- 手元で同じ最低限のゲートを先に回したい場合は次を使います。CI を待たずに落とせるものが分かります。
+- PR 用のワークフロー（`PR · Quality` / `PR · Linux` / `PR · macOS` / `PR · Windows` など）はリポジトリに定義されています。ただし **このフォークでは 2026-10-16 時点で `pull_request` / `push` を契機に実行されていません**（実行履歴は 0 件のまま。PR を実際に作成して確認）。Organization 側の Actions ポリシーが原因と考えられ、確認・変更にはオーナー権限（`admin:org`）が必要です。
+- 手動実行は動作します。`gh workflow run "CI · Manual Full"` でプラットフォーム別レーン（`CI · Linux` / `CI · macOS` / `CI · Windows` / `CI · Quality` / `CI · Website`）が起動することを確認済みです。
+- したがって **PR を出す前に手元で最低限のゲートを回してください**。自動検証が動かない現状では、これが唯一の定型チェックです。
 
   ```bash
   just check-pr            # origin/main との差分から対象クレートを判定して fmt / clippy / test
@@ -147,7 +148,6 @@ curl -s http://localhost:9337/v1/images/generations \
   ```
 
   `just` が無い環境では `bash scripts/check-pr.sh origin/main` を直接実行してください。作業ツリーの未コミット変更と未追跡ファイルも対象に含まれます。
-- ネイティブランタイムを含むフルの CI はプラットフォーム別のレーン（`CI · Linux` / `CI · macOS` / `CI · Windows`）に分かれています。手動で流す場合は `gh workflow run "CI · Manual Full"` です。
 
 ## 上流への追従
 
