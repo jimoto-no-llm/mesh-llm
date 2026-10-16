@@ -38,19 +38,28 @@ just build
 
 ### Linux x86_64（2026-10-16）
 
-検証した範囲:
+検証環境: Fedora 44 / kernel 6.19.10 / x86_64 / 16 コア / NVIDIA RTX 3070（CUDA ツールキット未導入のため CPU バックエンド）
 
-1. ビルド: `cargo build -p mesh-llm`（バックエンド非依存のホスト）が成功
-2. `./target/debug/mesh-llm --version` → `mesh-llm 0.78.0`
-3. `--help` に `serve` / `client` / `doctor` / `rdsh` などのサブコマンドが表示される
-4. `./target/debug/mesh-llm jimoto --json` がフォーク情報を返す
-5. `./target/debug/mesh-llm doctor split --help` が表示される
-6. テスト: `cargo test -p mesh-llm-host-runtime --lib` 全件通過、`cargo clippy --all-targets -- -D warnings` クリーン
+検証した範囲（**ネイティブランタイム込みのフルビルドと実推論を含む**）:
 
-未検証（この環境では実行できない）:
+1. ビルド: `just skippy backend=cpu` → ネイティブランタイム `meshllm-native-runtime-linux-x86_64-cpu` と `target/debug/skippy` を生成。ネイティブ（llama.cpp）ビルドは `Building llama.cpp with 16 parallel job(s)` と 16 並列で走行
+2. ビルド: `just mesh` → `target/debug/mesh-llm` を生成
+3. 起動: `./target/debug/mesh-llm serve --gguf <qwen2.5-3b-instruct-q4_k_m.gguf> --port 9337 --console 3131`。`/api/status` が `node_state: serving`、`llama_ready: true`、`version: 0.78.0+g18142E` を返す
+4. 推論: `/v1/chat/completions` が応答。実測は 34 プロンプトトークンで prefill 91.5 tok/s、decode 9.1 tok/s、レイテンシ 0.495 秒（CPU、3B Q4）
+5. 診断: `./target/debug/mesh-llm doctor split --model <id> --port 3131` が eligible/excluded の一覧を理由付きで表示（`missing_vram (local/host, 0.0 GB VRAM)`）、`--json` も同内容
+6. CLI: `--version` → `mesh-llm 0.78.0`、`jimoto --json`、`doctor split --help` など
+7. テスト: `cargo test -p mesh-llm-host-runtime --lib` 4,008 件通過、`cargo clippy -p mesh-llm-host-runtime --all-targets -- -D warnings` クリーン、`repo-consistency release-targets` 通過
 
-- `just build` によるネイティブランタイム込みのビルド。この環境には `just` と `sccache` が無いため、`cargo build`（ホストのみ）で代用しています
-- `mesh-llm setup` / `serve` / `join` と推論。ネイティブランタイムが無いため未実施です
+この環境での前提（再現時に必要）:
+
+- `just`（`cargo install just`）と `patchelf`（`pip install --user patchelf`。ネイティブランタイムのパッケージングに必要）を導入しました。`sccache` は無いため `export RUSTC_WRAPPER=""` で回避しています
+- `--backend` を省略すると CUDA を自動選択して失敗します（nvcc が無いため）。CPU で動かす場合は `backend=cpu` を明示してください
+
+未検証:
+
+- macOS / Windows の記録（未取得）
+- GPU バックエンド（CUDA/ROCm/Vulkan）での実行。CUDA ツールキット未導入のため CPU のみ
+- 複数ノードのメッシュ構成（`--join` / `--auto` / 分割推論）。この記録は単一ノードでの検証です
 
 再現手順は上記のコマンドのとおりです。記録の追加・訂正は Issue #52 へお願いします。
 
