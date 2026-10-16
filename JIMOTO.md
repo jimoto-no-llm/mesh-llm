@@ -59,7 +59,21 @@ just build
 
 - macOS / Windows の記録（未取得）
 - GPU バックエンド（CUDA/ROCm/Vulkan）での実行。CUDA ツールキット未導入のため CPU のみ
-- 複数ノードのメッシュ構成（`--join` / `--auto` / 分割推論）。この記録は単一ノードでの検証です
+
+### 2 ノードのメッシュと分割推論（同環境・追記）
+
+同一マシン上で、別々のノード鍵とポートを持つ 2 プロセスを組みました。
+
+- メッシュ参加: 片方を `--bind-port` と `--join-file <invite.token>` で参加させ、両ノードで `peers: 1`、`RTT 0〜5ms (direct)` を確認
+- モデル連合: 両ノードの `/v1/models` が**両方のモデル + `mesh`** を返すことを確認
+- 分割推論: 同じ GGUF を両ノードで `--split --max-vram 6` で起動し、`topology-mesh-split-<id>` が 2 ノードで成立。coordinator 側は `daemon_state: ready_serving`、後段側は同じ `run_id` で `daemon_state: ready_proxying` かつ `stage_id=stage-1#1` を担当
+- `doctor split` が、ローカル（`local/host`）とリモート（`peer/host`）の両方を理由付きで表示
+
+この検証で分かった注意点:
+
+- 同一マシンで 2 プロセスを動かすと既定のノード鍵が衝突し、join が拒否されます。`MESH_LLM_NODE_KEY_PATH` で別の鍵を与えてください（エラーメッセージにも同じ案内が出ます）
+- `--max-vram` を小さくしすぎると分割プランが容量不足で組めません。ログに `split_capacity_shortfall` として必要量・配置可能レイヤ数・参加ノード別の内訳が出ます（例: 8.3GB 必要 / 5.9GB 利用可 / 24 of 36 レイヤ）
+- 後段（stage-1）ノードは `/api/status` 上で `node_state: standby` / `llama_ready: false` のままですが、実際には `daemon_state: ready_proxying` でステージを提供しています。状態表示と実態の乖離は Issue #20 で追跡中です
 
 再現手順は上記のコマンドのとおりです。記録の追加・訂正は Issue #52 へお願いします。
 
