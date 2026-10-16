@@ -329,11 +329,10 @@ fn jcs_value(v: &serde_json::Value, out: &mut String) {
         Value::Object(map) => {
             // RFC 8785 §3.2.3: object members sorted by UTF-16 code-unit sequence.
             let mut items: Vec<(&String, &Value)> = map.iter().collect();
-            items.sort_by(|(a, _), (b, _)| {
-                let au: Vec<u16> = a.encode_utf16().collect();
-                let bu: Vec<u16> = b.encode_utf16().collect();
-                au.cmp(&bu)
-            });
+            // Compare the UTF-16 code-unit sequences directly: `Iterator::cmp`
+            // gives the same order as collecting both sides, without the two
+            // temporary Vecs that used to be allocated per comparison.
+            items.sort_by(|(a, _), (b, _)| a.encode_utf16().cmp(b.encode_utf16()));
             out.push('{');
             for (i, (k, val)) in items.iter().enumerate() {
                 if i > 0 {
@@ -611,6 +610,28 @@ mod tests {
         assert_eq!(
             digest(&serde_json::json!({"v": "a\tb"})).as_deref(),
             Some("595711cef0e6e4d037e1fae2b1ece32702c442c0501d6362791e31cd1a6c866d")
+        );
+    }
+
+    /// RFC 8785 sorts object members by UTF-16 code units, not by scalar value.
+    /// A non-BMP key starts with a surrogate (0xD83D), which is below U+FFFD, so
+    /// it must sort before U+FFFD even though its scalar value is larger.
+    #[test]
+    fn object_keys_sort_by_utf16_code_units_across_bmp_boundaries() {
+        let body = serde_json::json!({
+            "\u{FFFD}": 1,
+            "\u{1F600}": 2,
+            "\u{20AC}": 3,
+            "a": 4
+        });
+        let canonical = String::from_utf8(jcs_bytes(&body)).expect("canonical JSON is UTF-8");
+        let positions: Vec<usize> = ["\"a\"", "\"\u{20AC}\"", "\"\u{1F600}\"", "\"\u{FFFD}\""]
+            .iter()
+            .map(|key| canonical.find(key).expect("key present in canonical JSON"))
+            .collect();
+        assert!(
+            positions.windows(2).all(|pair| pair[0] < pair[1]),
+            "keys must follow UTF-16 code-unit order, got {positions:?} in {canonical}"
         );
     }
 }
