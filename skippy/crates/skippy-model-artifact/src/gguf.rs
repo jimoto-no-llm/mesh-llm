@@ -779,6 +779,10 @@ fn read_token_type_array(f: &mut GgufReader, typ: GgufType) -> std::io::Result<V
 
 /// Reads a source GGUF's tokenizer vocabulary and its control-token markers.
 /// This scans metadata only and rejects malformed or incomplete inventories.
+///
+/// A vocabulary without `tokenizer.ggml.token_type` cannot distinguish control
+/// boundaries, so it is rejected instead of assuming every token is a byte
+/// token; an absent inventory is honest, a synthesized one is not.
 pub fn scan_gguf_tokenizer_inventory(path: &Path) -> Option<GgufTokenizerInventory> {
     let GgufHeader {
         file: mut f, n_kv, ..
@@ -799,7 +803,7 @@ pub fn scan_gguf_tokenizer_inventory(path: &Path) -> Option<GgufTokenizerInvento
     }
 
     let raw_tokens = raw_tokens?;
-    let token_types = token_types.unwrap_or_else(|| vec![0; raw_tokens.len()]);
+    let token_types = token_types?;
     if raw_tokens.is_empty() || raw_tokens.len() != token_types.len() {
         return None;
     }
@@ -1269,6 +1273,24 @@ mod tests {
         assert!(!inventory.tokens[0].is_control);
         assert_eq!(inventory.tokens[1].raw, b"<eos>");
         assert!(inventory.tokens[1].is_control);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_tokenizer_inventory_requires_token_types() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&1i64.to_le_bytes());
+        push_gguf_string(&mut bytes, "tokenizer.ggml.tokens");
+        bytes.extend_from_slice(&(GgufType::Array as u32).to_le_bytes());
+        push_array_header(&mut bytes, GgufType::String, 2);
+        push_gguf_bytes(&mut bytes, b"hello");
+        push_gguf_bytes(&mut bytes, b"<eos>");
+
+        let path = write_bytes("skippy-model-artifact-gguf-missing-token-types", &bytes);
+        assert!(scan_gguf_tokenizer_inventory(&path).is_none());
         let _ = std::fs::remove_file(path);
     }
 
