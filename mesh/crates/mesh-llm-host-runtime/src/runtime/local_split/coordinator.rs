@@ -457,6 +457,19 @@ impl SplitTopologyCoordinator {
             participants = ?split_participant_labels(&candidate.participants),
             "split topology lost an active stage peer; loading replacement split generation"
         );
+        // The replacement takes time to load; say so rather than letting the
+        // operator read the stall as a hang.
+        let _ = mesh_llm_events::emit_event(mesh_llm_events::OutputEvent::Warning {
+            message: format!(
+                "Split stage lost on {}; loading a replacement for {}",
+                Self::split_stage_loss_labels(missing_stage_nodes, unavailable_stage_nodes),
+                self.model_ref
+            ),
+            context: Some(format!(
+                "reason={reason} topology={} generation={}",
+                self.active.topology_id, self.active.generation
+            )),
+        });
         match self
             .load_and_publish_candidate(reason, candidate.clone())
             .await
@@ -494,6 +507,25 @@ impl SplitTopologyCoordinator {
             .await
     }
 
+    /// Node list for a stage-loss message: peers that stopped answering plus the
+    /// ones currently withholding their stage, without duplicates.
+    fn split_stage_loss_labels(
+        missing_stage_nodes: &[iroh::EndpointId],
+        unavailable_stage_nodes: &[iroh::EndpointId],
+    ) -> String {
+        let mut labels = split_node_labels(missing_stage_nodes);
+        for label in split_node_labels(unavailable_stage_nodes) {
+            if !labels.contains(&label) {
+                labels.push(label);
+            }
+        }
+        if labels.is_empty() {
+            "unknown nodes".to_string()
+        } else {
+            labels.join(", ")
+        }
+    }
+
     async fn handle_withdraw_loss(
         &mut self,
         reason: &'static str,
@@ -509,6 +541,19 @@ impl SplitTopologyCoordinator {
             unavailable_stage_nodes = ?split_node_labels(unavailable_stage_nodes),
             "split topology lost an active stage peer and no replacement path is available; withdrawing active generation"
         );
+        // A withdrawn split stops answering for this model. Say so in the
+        // console/TUI instead of leaving it to a tracing line.
+        let _ = mesh_llm_events::emit_event(mesh_llm_events::OutputEvent::Error {
+            message: format!(
+                "Split stage lost on {} and no replacement is available; no longer serving {}",
+                Self::split_stage_loss_labels(missing_stage_nodes, unavailable_stage_nodes),
+                self.model_ref
+            ),
+            context: Some(format!(
+                "reason={reason} topology={} generation={}",
+                self.active.topology_id, self.active.generation
+            )),
+        });
         self.publish_withdrawal(reason, unavailable_stage_nodes.to_vec())
             .await
     }
@@ -1353,5 +1398,32 @@ pub(super) fn split_stage_balance_score(stages: &[RuntimeSliceStagePlan]) -> u32
 fn drain_split_peer_changes<T>(peer_rx: &mut tokio::sync::watch::Receiver<T>) {
     while peer_rx.has_changed().unwrap_or(false) {
         let _ = peer_rx.borrow_and_update();
+    }
+}
+
+#[cfg(test)]
+mod stage_loss_label_tests {
+    use super::SplitTopologyCoordinator;
+
+    fn node(seed: u8) -> iroh::EndpointId {
+        iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[seed; 32]).public())
+    }
+
+    #[test]
+    fn labels_merge_missing_and_unavailable_nodes_without_duplicates() {
+        let missing = node(1);
+        let withheld = node(2);
+        assert_eq!(
+            SplitTopologyCoordinator::split_stage_loss_labels(&[missing], &[missing, withheld]),
+            format!("{}, {}", missing.fmt_short(), withheld.fmt_short())
+        );
+    }
+
+    #[test]
+    fn labels_fall_back_when_no_node_is_known() {
+        assert_eq!(
+            SplitTopologyCoordinator::split_stage_loss_labels(&[], &[]),
+            "unknown nodes"
+        );
     }
 }
