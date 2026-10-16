@@ -501,13 +501,17 @@ if [[ "$LLAMA_STAGE_FULL_REPLAY" == "ON" ]]; then
   fi
 fi
 
+BUILD_JOBS="$(detect_jobs)"
+# Report the parallelism actually used so a slow build can be diagnosed from the
+# log instead of guessed at (CMAKE_BUILD_PARALLEL_LEVEL is the override).
+echo "Building llama.cpp with ${BUILD_JOBS} parallel job(s)"
 if [[ "$LLAMA_STAGE_UPSTREAM_TESTS" == "ON" ]]; then
   # Build CMake's complete default target set so every upstream llama.cpp
   # CTest executable is present. The ordinary ABI path intentionally builds
   # only the native link closure and Skippy probes listed above.
-  cmake --build "$LLAMA_BUILD_DIR" --config "${CMAKE_BUILD_TYPE:-Release}" --parallel "$(detect_jobs)"
+  cmake --build "$LLAMA_BUILD_DIR" --config "${CMAKE_BUILD_TYPE:-Release}" --parallel "$BUILD_JOBS"
 else
-  cmake --build "$LLAMA_BUILD_DIR" --config "${CMAKE_BUILD_TYPE:-Release}" --parallel "$(detect_jobs)" --target "${BUILD_TARGETS[@]}"
+  cmake --build "$LLAMA_BUILD_DIR" --config "${CMAKE_BUILD_TYPE:-Release}" --parallel "$BUILD_JOBS" --target "${BUILD_TARGETS[@]}"
 fi
 
 if [[ "$LLAMA_STAGE_UPSTREAM_TESTS" == "ON" ]]; then
