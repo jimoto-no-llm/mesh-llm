@@ -175,6 +175,43 @@ pub struct LogEntry {
     pub timestamp: Option<String>,
 }
 
+/// Buffers raw SSE bytes until a complete line is available.
+///
+/// Keeping the undecoded tail as bytes means a multi-byte UTF-8 character
+/// split across two HTTP chunks is decoded only after all of its bytes have
+/// arrived, instead of becoming a replacement character.
+#[derive(Default)]
+struct SseLogBuffer {
+    partial: Vec<u8>,
+}
+
+impl SseLogBuffer {
+    /// Appends one chunk and returns the log lines that became complete.
+    fn push(&mut self, bytes: &[u8]) -> Vec<Result<String>> {
+        self.partial.extend_from_slice(bytes);
+        let mut results = Vec::new();
+
+        // Process all complete lines; keep the unfinished tail as bytes.
+        while let Some(newline_pos) = self.partial.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.partial.drain(..=newline_pos).collect::<Vec<u8>>();
+            line.pop();
+            if let Some(data) = parse_sse_log_line(&String::from_utf8_lossy(&line)) {
+                results.push(Ok(data));
+            }
+        }
+
+        results
+    }
+}
+
+fn parse_sse_log_line(line: &str) -> Option<String> {
+    let json_str = line.trim().strip_prefix("data: ")?;
+    Some(match serde_json::from_str::<LogEntry>(json_str) {
+        Ok(entry) => entry.data,
+        Err(_) => json_str.to_string(),
+    })
+}
+
 impl HfJobsClient {
     /// Build a client from environment.
     ///
@@ -255,32 +292,16 @@ impl HfJobsClient {
             anyhow::bail!("HF Jobs API returned {status}: {body}");
         }
 
-        // Buffer partial lines across chunk boundaries so SSE `data:` lines
-        // that span two HTTP chunks are reconstructed before parsing.
+        // Buffer raw bytes across chunk boundaries so SSE `data:` lines and
+        // multi-byte UTF-8 characters that span two HTTP chunks are
+        // reconstructed before parsing.
         use futures::StreamExt;
         let stream = resp.bytes_stream();
-        let mut partial = String::new();
+        let mut buffer = SseLogBuffer::default();
         let lines = stream.flat_map(
             move |chunk: std::result::Result<bytes::Bytes, reqwest::Error>| {
                 let lines: Vec<Result<String>> = match chunk {
-                    Ok(bytes) => {
-                        partial.push_str(&String::from_utf8_lossy(&bytes));
-                        let mut results = Vec::new();
-
-                        // Process all complete lines; keep the last fragment.
-                        while let Some(newline_pos) = partial.find('\n') {
-                            let line = partial[..newline_pos].trim().to_string();
-                            partial = partial[newline_pos + 1..].to_string();
-
-                            if let Some(json_str) = line.strip_prefix("data: ") {
-                                match serde_json::from_str::<LogEntry>(json_str) {
-                                    Ok(entry) => results.push(Ok(entry.data)),
-                                    Err(_) => results.push(Ok(json_str.to_string())),
-                                }
-                            }
-                        }
-                        results
-                    }
+                    Ok(bytes) => buffer.push(&bytes),
                     Err(e) => vec![Err(anyhow::anyhow!("log stream error: {e}"))],
                 };
                 futures::stream::iter(lines)
@@ -546,6 +567,35 @@ mod tests {
             unit_cost_micro_usd: None,
             unit_label: Some("minute".to_string()),
         }
+    }
+
+    #[test]
+    fn sse_log_buffer_preserves_utf8_split_across_chunks() {
+        let payload = format!(
+            "data: {}\n",
+            r#"{"data":"日本語のログ","timestamp":"2026-01-01T00:00:00Z"}"#
+        );
+
+        // Feed one byte at a time so every multi-byte character is split.
+        let mut buffer = SseLogBuffer::default();
+        let mut lines = Vec::new();
+        for byte in payload.bytes() {
+            lines.extend(buffer.push(&[byte]));
+        }
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].as_ref().unwrap(), "日本語のログ");
+    }
+
+    #[test]
+    fn sse_log_buffer_joins_line_split_across_chunks() {
+        let mut buffer = SseLogBuffer::default();
+
+        assert!(buffer.push(b"data: {\"data\":\"hel").is_empty());
+        let lines = buffer.push(b"lo\",\"timestamp\":null}\n");
+
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].as_ref().unwrap(), "hello");
     }
 
     #[test]
