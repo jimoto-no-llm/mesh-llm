@@ -64,7 +64,11 @@ impl<C: CatalogProvider> ModelResolver<C> {
             candidates.push(ModelArtifactCandidate::LocalLayerPackage(package));
             return Ok(candidates);
         }
-        if path.exists() && path.extension().is_some_and(|ext| ext == "gguf") {
+        if path.exists()
+            && path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+        {
             candidates.push(ModelArtifactCandidate::LocalGguf(LocalGguf {
                 path: path.canonicalize().unwrap_or(path),
                 identity: None,
@@ -666,6 +670,36 @@ mod tests {
             }
             other => panic!("expected LocalGguf, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn resolves_existing_local_file_with_uppercase_gguf_extension() {
+        let dir = tempfile::tempdir().unwrap();
+        let gguf_path = dir.path().join("MODEL.GGUF");
+        std::fs::write(&gguf_path, b"fake gguf").unwrap();
+
+        let resolver = ModelResolver::new(MemoryCatalog::empty(), vec![]);
+        let candidates = resolver.resolve(gguf_path.to_str().unwrap()).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        match &candidates[0] {
+            ModelArtifactCandidate::LocalGguf(local) => {
+                assert_eq!(local.path, gguf_path.canonicalize().unwrap());
+                assert!(local.identity.is_none());
+            }
+            other => panic!("expected LocalGguf, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_uppercase_gguf_path_is_not_local_gguf() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("MODEL.GGUF");
+
+        let resolver = ModelResolver::new(MemoryCatalog::empty(), vec![]);
+        let candidates = resolver.resolve(missing.to_str().unwrap()).unwrap();
+
+        assert!(candidates.is_empty());
     }
 
     #[test]
