@@ -256,7 +256,11 @@ fn parse_iso_mtime(s: &str) -> f64 {
     // Expected format: "2024-01-15T10:30:00.123Z" or "2024-01-15T10:30:00Z"
     // or "2024-01-15T10:30:00+00:00" etc.
     let s = s.trim();
-    if s.len() < 19 {
+    // The parser below slices fixed byte ranges, so a non-ASCII string whose
+    // multi-byte character straddles one of those boundaries would panic before
+    // the date is rejected. The accepted format is ASCII by definition, so
+    // reject anything else up front and let the caller treat it as unknown.
+    if s.len() < 19 || !s.is_ascii() {
         return 0.0;
     }
 
@@ -1046,6 +1050,21 @@ mod tests {
         assert_eq!(parse_iso_mtime(""), 0.0);
         assert_eq!(parse_iso_mtime("not a date"), 0.0);
         assert_eq!(parse_iso_mtime("short"), 0.0);
+    }
+
+    #[test]
+    fn test_parse_iso_mtime_rejects_non_ascii_without_panicking() {
+        // A multi-byte character spanning the fixed byte boundaries used above
+        // must be rejected, not sliced (previously panicked: "end byte index 4
+        // is not a char boundary").
+        for input in [
+            "aéé-01-01T00:00:00Z",
+            "2024-0é-01T00:00:00Z",
+            "2024-01-0éT00:00:00Z",
+            "2024-01-01T0é:00:00Z",
+        ] {
+            assert_eq!(parse_iso_mtime(input), 0.0, "input {input:?}");
+        }
     }
 
     #[test]
