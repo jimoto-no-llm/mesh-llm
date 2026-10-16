@@ -68,7 +68,7 @@ pub(crate) async fn handle_tool_query(
     .await;
 
     let fallback_name = actor_top.unwrap_or_default();
-    let (response_body, actor_name, actor_ok, attempts) = finalize_actor_output(
+    let outcome = finalize_actor_output(
         session,
         allowed_tools,
         forced_tool,
@@ -78,20 +78,23 @@ pub(crate) async fn handle_tool_query(
     );
 
     // Reducer role marks the acting pass, distinct from advisory summaries.
+    // The acting pass reports the same classification the reference workers
+    // do; a failed actor reports no classification rather than a fabricated
+    // one.
     summaries.push(WorkerSummary {
-        model: actor_name,
+        model: outcome.model,
         role: WorkerRole::Reducer,
-        succeeded: actor_ok,
+        succeeded: outcome.succeeded,
         elapsed_ms: start.elapsed().as_millis() as u64,
-        output_kind: None,
-        confidence: None,
+        output_kind: outcome.output_kind,
+        confidence: outcome.confidence,
     });
 
     TurnResult {
-        response_body,
+        response_body: outcome.body,
         worker_summaries: summaries,
         reducer_used: true,
-        reducer_attempts: attempts,
+        reducer_attempts: outcome.attempts,
         turn_kind: TurnKind::Fanout,
         elapsed_ms: start.elapsed().as_millis() as u64,
     }
@@ -199,6 +202,24 @@ async fn dispatch_and_gather_references(
     .await
 }
 
+/// The actor's response body plus the accounting its worker summary reports.
+struct ActorOutcome {
+    /// OpenAI response body returned to the client.
+    body: Value,
+    /// Model that produced the body (the fallback name when the actor failed).
+    model: String,
+    /// Whether the actor returned a usable output.
+    succeeded: bool,
+    /// How many reducer candidates were spawned for the acting pass.
+    attempts: u32,
+    /// Classification of the actor's normalized output. None only when the
+    /// actor failed, so a summary distinguishes "failed" from "succeeded but
+    /// unclassified".
+    output_kind: Option<normalize::OutputKind>,
+    /// The classification's confidence, paired with output_kind.
+    confidence: Option<f32>,
+}
+
 /// Turn the actor's hedged result into a response body + accounting.
 fn finalize_actor_output(
     session: &Session,
@@ -207,7 +228,7 @@ fn finalize_actor_output(
     references: &[WorkerOutput],
     fallback_actor_name: String,
     hedge: Result<reducer::HedgedReducerOk, reducer::HedgedReducerErr>,
-) -> (Value, String, bool, u32) {
+) -> ActorOutcome {
     match hedge {
         Ok(reducer::HedgedReducerOk {
             winner,
@@ -217,12 +238,14 @@ fn finalize_actor_output(
             let mut acted =
                 normalize::normalize_worker_output(&text, &winner, WorkerRole::Reducer, 0);
             enforce_tool_call_contract(&mut acted, allowed_tools, session.tools(), &winner);
-            (
-                actor_body(&acted, forced_tool, references),
-                winner,
-                true,
+            ActorOutcome {
+                body: actor_body(&acted, forced_tool, references),
+                model: winner,
+                succeeded: true,
                 attempts,
-            )
+                output_kind: Some(acted.kind),
+                confidence: Some(acted.confidence),
+            }
         }
         Err(reducer::HedgedReducerErr { err, attempts }) => {
             tracing::warn!("moa: all {attempts} actor candidate(s) failed: {err}");
@@ -238,7 +261,14 @@ fn finalize_actor_output(
                     MOA_ERR_ALL_REDUCERS_FAILED,
                 )
             };
-            (body, fallback_actor_name, false, attempts)
+            ActorOutcome {
+                body,
+                model: fallback_actor_name,
+                succeeded: false,
+                attempts,
+                output_kind: None,
+                confidence: None,
+            }
         }
     }
 }
