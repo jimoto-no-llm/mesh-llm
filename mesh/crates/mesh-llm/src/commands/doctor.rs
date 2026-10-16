@@ -375,6 +375,27 @@ fn split_readiness_lines(report: &Value) -> Vec<String> {
 
     lines.extend(serving_strategy_lines(&report["serving_strategy"]));
 
+    // Placement reasoning: which peers the split can use, and why the rest are
+    // excluded. The report already carries per-node source, VRAM, RTT and the
+    // exclusion reason; showing only counts left that unavailable to operators.
+    if let Some(items) = report["participants"].as_array() {
+        let details = split_readiness_participant_lines(items);
+        if !details.is_empty() {
+            lines.push(String::new());
+            lines.push("Eligible peers:".to_string());
+            lines.extend(details);
+        }
+    }
+
+    if let Some(items) = report["exclusions"].as_array() {
+        let details = split_readiness_exclusion_lines(items);
+        if !details.is_empty() {
+            lines.push(String::new());
+            lines.push("Excluded peers:".to_string());
+            lines.extend(details);
+        }
+    }
+
     if let Some(items) = report["blockers"].as_array() {
         let blockers = split_readiness_blocker_lines(items);
         if !blockers.is_empty() {
@@ -401,6 +422,74 @@ fn split_readiness_lines(report: &Value) -> Vec<String> {
         }
     }
     lines
+}
+
+/// Peers the split may use, with the facts the placement decision sees.
+fn split_readiness_participant_lines(items: &[Value]) -> Vec<String> {
+    capped_detail_lines(items, split_readiness_participant_line)
+}
+
+/// Peers the split cannot use, each with the reason the planner recorded.
+fn split_readiness_exclusion_lines(items: &[Value]) -> Vec<String> {
+    capped_detail_lines(items, split_readiness_exclusion_line)
+}
+
+fn capped_detail_lines(items: &[Value], line: fn(&Value) -> Option<String>) -> Vec<String> {
+    const MAX_DETAIL_LINES: usize = 10;
+    let mut lines = items
+        .iter()
+        .take(MAX_DETAIL_LINES)
+        .filter_map(line)
+        .collect::<Vec<_>>();
+    if items.len() > MAX_DETAIL_LINES {
+        lines.push(format!("  ... and {} more", items.len() - MAX_DETAIL_LINES));
+    }
+    lines
+}
+
+fn split_readiness_participant_line(item: &Value) -> Option<String> {
+    let name = item["short_node_id"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| item["node_id"].as_str().map(str::to_string))?;
+    let mut facts = vec![split_readiness_node_facts(item)];
+    if let Some(rtt) = item["rtt_ms"].as_u64() {
+        facts.push(format!("rtt {rtt}ms"));
+    }
+    if let Some(state) = item["model_source_state"]
+        .as_str()
+        .filter(|v| !v.is_empty())
+    {
+        facts.push(format!("model {state}"));
+    }
+    Some(format!("  - {name}: {}", facts.join(", ")))
+}
+
+fn split_readiness_exclusion_line(item: &Value) -> Option<String> {
+    let name = item["short_node_id"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| item["node_id"].as_str().map(str::to_string))?;
+    let reason = item["reason"].as_str().unwrap_or("unknown reason");
+    let recommendation = item["recommendation"].as_str().unwrap_or_default();
+    let suffix = if recommendation.is_empty() {
+        String::new()
+    } else {
+        format!(" - {recommendation}")
+    };
+    Some(format!(
+        "  - {name}: {reason} ({}){suffix}",
+        split_readiness_node_facts(item)
+    ))
+}
+
+fn split_readiness_node_facts(item: &Value) -> String {
+    let source = item["source"].as_str().unwrap_or("unknown");
+    let role = item["role"].as_str().unwrap_or("unknown");
+    match item["vram_bytes"].as_u64() {
+        Some(bytes) => format!("{source}/{role}, {:.1} GB VRAM", bytes as f64 / 1e9),
+        None => format!("{source}/{role}"),
+    }
 }
 
 fn split_readiness_blocker_lines(items: &[Value]) -> Vec<String> {
@@ -617,5 +706,74 @@ mod tests {
             runtime_dir: runtime_dir.into(),
             is_self: false,
         }
+    }
+
+    #[test]
+    fn split_readiness_lines_explain_placement_and_exclusions() {
+        let rendered = split_readiness_lines(&json!({
+            "model_ref": "Qwen3-8B-Q4_K_M",
+            "verdict": "ready",
+            "participant_count": 2,
+            "exclusion_count": 1,
+            "participants": [
+                {"node_id": "aaaaaaaaaaaa", "short_node_id": "aaaaaaaa", "source": "local",
+                 "role": "host", "vram_bytes": 24_000_000_000u64, "rtt_ms": 3,
+                 "model_source_state": "cached", "artifact_transfer_supported": true},
+                {"node_id": "bbbbbbbbbbbb", "short_node_id": "bbbbbbbb", "source": "peer",
+                 "role": "worker", "vram_bytes": 8_000_000_000u64,
+                 "model_source_state": "missing", "artifact_transfer_supported": true}
+            ],
+            "exclusions": [
+                {"node_id": "cccccccccccc", "short_node_id": "cccccccc", "source": "peer",
+                 "role": "worker", "reason": "insufficient_capacity",
+                 "recommendation": "free memory or lower the quantisation",
+                 "vram_bytes": 2_000_000_000u64}
+            ],
+            "blockers": [],
+            "recommendations": []
+        }))
+        .join("\n");
+
+        assert!(rendered.contains("Eligible peers:"), "{rendered}");
+        assert!(
+            rendered.contains("aaaaaaaa: local/host, 24.0 GB VRAM, rtt 3ms, model cached"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("bbbbbbbb: peer/worker, 8.0 GB VRAM, model missing"),
+            "{rendered}"
+        );
+        // The exclusion list is the whole point: a count alone does not tell an
+        // operator which peer to fix or why it was dropped.
+        assert!(rendered.contains("Excluded peers:"), "{rendered}");
+        assert!(
+            rendered.contains(
+                "cccccccc: insufficient_capacity (peer/worker, 2.0 GB VRAM) - free memory"
+            ),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn split_readiness_detail_lines_are_capped() {
+        let participants = (0..12)
+            .map(|index| {
+                json!({
+                    "node_id": format!("{index:012}"), "short_node_id": format!("node{index:04}"),
+                    "source": "peer", "role": "worker", "vram_bytes": 1_000_000_000u64,
+                    "model_source_state": "missing", "artifact_transfer_supported": true
+                })
+            })
+            .collect::<Vec<_>>();
+        let rendered = split_readiness_lines(&json!({
+            "model_ref": "m", "verdict": "ready", "participant_count": 12, "exclusion_count": 0,
+            "participants": participants, "exclusions": [], "blockers": [], "recommendations": []
+        }))
+        .join("\n");
+
+        assert!(rendered.contains("node0000: "), "{rendered}");
+        assert!(rendered.contains("node0009: "), "{rendered}");
+        assert!(!rendered.contains("node0010: "), "{rendered}");
+        assert!(rendered.contains("... and 2 more"), "{rendered}");
     }
 }
